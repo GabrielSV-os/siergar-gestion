@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { useToast } from '../components/Toast';
-import { Package, Plus, Search, Upload, ArrowDownCircle, ArrowUpCircle, X, Trash2, History, Download, FileText } from 'lucide-react';
+import { Package, Plus, Search, Upload, ArrowDownCircle, ArrowUpCircle, X, Trash2, History, Download, FileText, MoreVertical, FileSpreadsheet } from 'lucide-react';
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -21,11 +21,15 @@ export default function Inventario() {
     const [showAddMaterial, setShowAddMaterial] = useState(false);
     const [showEntrada, setShowEntrada] = useState(false);
     const [showBulkEntrada, setShowBulkEntrada] = useState(false);
+    const [showActionsDropdown, setShowActionsDropdown] = useState(false);
+    const [showExcelImport, setShowExcelImport] = useState(false);
+    const [excelPreview, setExcelPreview] = useState([]);
+    const [excelError, setExcelError] = useState('');
 
     // Form states
     const [newMaterial, setNewMaterial] = useState({ nombre: '', codigo: '', unidad: 'unidad' });
     const [entradaForm, setEntradaForm] = useState({ material_id: '', cantidad: '', descripcion: '' });
-    const [bulkRows, setBulkRows] = useState([{ material_id: '', cantidad: '' }]);
+    const [bulkRows, setBulkRows] = useState([{ material_id: '', cantidad: '', search: '' }]);
 
     useEffect(() => {
         loadData();
@@ -148,11 +152,20 @@ export default function Inventario() {
             return;
         }
 
+        // Consolidate duplicate materials into single entries
+        const consolidated = {};
         for (const row of validRows) {
             const qty = parseFloat(row.cantidad);
+            if (consolidated[row.material_id]) {
+                consolidated[row.material_id] += qty;
+            } else {
+                consolidated[row.material_id] = qty;
+            }
+        }
 
+        for (const [material_id, qty] of Object.entries(consolidated)) {
             await supabase.from('movimientos_inventario').insert({
-                material_id: row.material_id,
+                material_id,
                 tipo: 'entrada',
                 cantidad: qty,
                 descripcion: 'Entrada bulk'
@@ -160,26 +173,103 @@ export default function Inventario() {
 
             const { data: inv } = await supabase.from('inventario')
                 .select('cantidad')
-                .eq('material_id', row.material_id)
+                .eq('material_id', material_id)
                 .single();
 
             if (inv) {
                 await supabase.from('inventario')
                     .update({ cantidad: inv.cantidad + qty, updated_at: new Date().toISOString() })
-                    .eq('material_id', row.material_id);
+                    .eq('material_id', material_id);
             } else {
                 await supabase.from('inventario')
-                    .insert({ material_id: row.material_id, cantidad: qty });
+                    .insert({ material_id, cantidad: qty });
             }
         }
 
         toast(`${validRows.length} materiales actualizados`);
-        setBulkRows([{ material_id: '', cantidad: '' }]);
+        setBulkRows([{ material_id: '', cantidad: '', search: '' }]);
         setShowBulkEntrada(false);
         loadData();
     }
 
 
+
+    function handleExcelFile(e) {
+        const file = e.target.files[0];
+        if (!file) return;
+        setExcelError('');
+        const reader = new FileReader();
+        reader.onload = (evt) => {
+            try {
+                const wb = XLSX.read(evt.target.result, { type: 'array' });
+                const ws = wb.Sheets[wb.SheetNames[0]];
+                const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+                if (rows.length === 0) { setExcelError('El archivo está vacío.'); return; }
+                // Normalize column names (case-insensitive, trim)
+                const normalized = rows.map(row => {
+                    const obj = {};
+                    Object.keys(row).forEach(k => { obj[k.trim().toLowerCase()] = row[k]; });
+                    return obj;
+                });
+                // Validate required columns
+                const first = normalized[0];
+                const hasMaterial = 'material' in first || 'nombre' in first;
+                const hasStock = 'stock' in first || 'cantidad' in first;
+                if (!hasMaterial || !hasStock) {
+                    setExcelError('El Excel debe tener al menos las columnas "Material" y "Stock". Revise el formato de ejemplo.');
+                    return;
+                }
+                const parsed = normalized.map(r => ({
+                    codigo: String(r.codigo || r['código'] || '').trim(),
+                    nombre: String(r.material || r.nombre || '').trim().toUpperCase(),
+                    unidad: String(r.unidad || 'unidad').trim().toLowerCase(),
+                    stock: parseFloat(r.stock || r.cantidad || 0) || 0
+                })).filter(r => r.nombre && r.stock > 0);
+                if (parsed.length === 0) { setExcelError('No se encontraron filas válidas con nombre y stock > 0.'); return; }
+                setExcelPreview(parsed);
+            } catch (err) {
+                setExcelError('Error al leer el archivo: ' + err.message);
+            }
+        };
+        reader.readAsArrayBuffer(file);
+    }
+
+    async function handleExcelImport() {
+        if (excelPreview.length === 0) return;
+        let created = 0, updated = 0;
+        for (const row of excelPreview) {
+            // Find existing material by name or code
+            let mat = materiales.find(m =>
+                m.nombre.toUpperCase() === row.nombre ||
+                (row.codigo && m.codigo && m.codigo.toUpperCase() === row.codigo.toUpperCase())
+            );
+            if (!mat) {
+                // Create new material
+                const { data, error } = await supabase.from('materiales').insert({
+                    nombre: row.nombre, codigo: row.codigo || null, unidad: row.unidad
+                }).select().single();
+                if (error) { toast(`Error creando ${row.nombre}: ${error.message}`, 'error'); continue; }
+                mat = data;
+                created++;
+            }
+            // Register entry movement
+            await supabase.from('movimientos_inventario').insert({
+                material_id: mat.id, tipo: 'entrada', cantidad: row.stock, descripcion: 'Importación desde Excel'
+            });
+            // Update or create inventory
+            const { data: inv } = await supabase.from('inventario').select('cantidad').eq('material_id', mat.id).single();
+            if (inv) {
+                await supabase.from('inventario').update({ cantidad: inv.cantidad + row.stock, updated_at: new Date().toISOString() }).eq('material_id', mat.id);
+            } else {
+                await supabase.from('inventario').insert({ material_id: mat.id, cantidad: row.stock });
+            }
+            updated++;
+        }
+        toast(`Importación completada: ${created} materiales nuevos, ${updated} entradas registradas`);
+        setExcelPreview([]);
+        setShowExcelImport(false);
+        loadData();
+    }
 
     const filteredMateriales = materiales.filter(m =>
         m.nombre.toLowerCase().includes(search.toLowerCase()) ||
@@ -195,16 +285,45 @@ export default function Inventario() {
                     <h2>Inventario</h2>
                     <p className="page-header-subtitle">Gestión de materiales y stock</p>
                 </div>
-                <div className="btn-group">
-                    <button className="btn btn-secondary" onClick={() => setShowBulkEntrada(true)}>
-                        <Upload size={16} /> Entrada Bulk
-                    </button>
-                    <button className="btn btn-secondary" onClick={() => setShowEntrada(true)}>
-                        <ArrowDownCircle size={16} /> Registrar Entrada
-                    </button>
+                <div className="btn-group" style={{ position: 'relative' }}>
                     <button className="btn btn-primary" onClick={() => setShowAddMaterial(true)}>
                         <Plus size={16} /> Agregar Material
                     </button>
+                    <button
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '6px 8px' }}
+                        onClick={() => setShowActionsDropdown(!showActionsDropdown)}
+                    >
+                        <MoreVertical size={16} />
+                    </button>
+
+                    {showActionsDropdown && (
+                        <>
+                            <div className="animated-dropdown-backdrop" onClick={() => setShowActionsDropdown(false)} />
+                            <div className="animated-dropdown">
+                                <div className="animated-dropdown-label">Acciones</div>
+                                <div className="animated-dropdown-separator" />
+                                <button
+                                    className="animated-dropdown-item"
+                                    onClick={() => { setShowActionsDropdown(false); setShowEntrada(true); }}
+                                >
+                                    <ArrowDownCircle size={14} /> Registrar Entrada
+                                </button>
+                                <button
+                                    className="animated-dropdown-item"
+                                    onClick={() => { setShowActionsDropdown(false); setShowBulkEntrada(true); }}
+                                >
+                                    <Upload size={14} /> Entrada Bulk
+                                </button>
+                                <button
+                                    className="animated-dropdown-item"
+                                    onClick={() => { setShowActionsDropdown(false); setShowExcelImport(true); setExcelPreview([]); setExcelError(''); }}
+                                >
+                                    <FileSpreadsheet size={14} /> Importar desde Excel
+                                </button>
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
 
@@ -576,37 +695,87 @@ export default function Inventario() {
                         </div>
                         <div className="modal-body">
                             <form onSubmit={handleBulkEntrada}>
-                                {bulkRows.map((row, i) => (
-                                    <div className="bulk-row" key={i}>
-                                        <select className="form-select" value={row.material_id}
-                                            onChange={e => {
-                                                const nr = [...bulkRows];
-                                                nr[i].material_id = e.target.value;
-                                                setBulkRows(nr);
+                                {bulkRows.map((row, i) => {
+                                    const usedIds = bulkRows.filter((_, j) => j !== i).map(r => r.material_id).filter(Boolean);
+                                    const available = materiales.filter(m => !usedIds.includes(m.id));
+                                    const searchTerm = (row.search || '').toLowerCase();
+                                    const filtered = searchTerm
+                                        ? available.filter(m => m.nombre.toLowerCase().includes(searchTerm) || (m.codigo && m.codigo.toLowerCase().includes(searchTerm)))
+                                        : available;
+                                    const selectedMat = materiales.find(m => m.id === row.material_id);
+
+                                    return (
+                                        <div className="bulk-row" key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 36px', gap: 8, marginBottom: 8, alignItems: 'start' }}>
+                                            <div style={{ position: 'relative' }}>
+                                                <input
+                                                    className="form-input"
+                                                    placeholder="Buscar por nombre o código..."
+                                                    value={row.material_id ? (selectedMat ? `${selectedMat.codigo ? `[${selectedMat.codigo}] ` : ''}${selectedMat.nombre}` : '') : row.search}
+                                                    onChange={e => {
+                                                        const nr = [...bulkRows];
+                                                        nr[i].search = e.target.value;
+                                                        nr[i].material_id = '';
+                                                        setBulkRows(nr);
+                                                    }}
+                                                    onFocus={() => {
+                                                        if (row.material_id) {
+                                                            const nr = [...bulkRows];
+                                                            nr[i].search = '';
+                                                            nr[i].material_id = '';
+                                                            setBulkRows(nr);
+                                                        }
+                                                    }}
+                                                    autoComplete="off"
+                                                />
+                                                {!row.material_id && (row.search !== undefined) && document.activeElement?.closest('.bulk-row') === document.querySelectorAll('.bulk-row')[i] ? null : null}
+                                                {!row.material_id && (
+                                                    <div style={{
+                                                        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
+                                                        background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
+                                                        borderRadius: 'var(--radius-sm)', maxHeight: 180, overflowY: 'auto',
+                                                        boxShadow: 'var(--shadow-lg)', display: row.search ? 'block' : 'none'
+                                                    }}>
+                                                        {filtered.length > 0 ? filtered.map(m => (
+                                                            <div key={m.id}
+                                                                style={{ padding: '8px 12px', cursor: 'pointer', fontSize: 13, color: 'var(--text-primary)', borderBottom: '1px solid var(--border-light)' }}
+                                                                onMouseDown={e => {
+                                                                    e.preventDefault();
+                                                                    const nr = [...bulkRows];
+                                                                    nr[i].material_id = m.id;
+                                                                    nr[i].search = '';
+                                                                    setBulkRows(nr);
+                                                                }}
+                                                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+                                                                onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
+                                                            >
+                                                                {m.codigo ? <span style={{ color: 'var(--accent-blue)', marginRight: 6 }}>[{m.codigo}]</span> : null}
+                                                                {m.nombre}
+                                                            </div>
+                                                        )) : (
+                                                            <div style={{ padding: '8px 12px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>Sin resultados</div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+                                            <input className="form-input" type="number" min="0.01" step="0.01"
+                                                placeholder="Cant."
+                                                value={row.cantidad}
+                                                onChange={e => {
+                                                    const nr = [...bulkRows];
+                                                    nr[i].cantidad = e.target.value;
+                                                    setBulkRows(nr);
+                                                }}
+                                            />
+                                            <button type="button" className="btn btn-secondary btn-sm" style={{ padding: '6px', height: 36 }} onClick={() => {
+                                                if (bulkRows.length > 1) setBulkRows(bulkRows.filter((_, j) => j !== i));
                                             }}>
-                                            <option value="">Seleccionar material...</option>
-                                            {materiales.map(m => (
-                                                <option key={m.id} value={m.id}>{m.codigo ? `[${m.codigo}] ` : ''}{m.nombre}</option>
-                                            ))}
-                                        </select>
-                                        <input className="form-input" type="number" min="0.01" step="0.01"
-                                            placeholder="Qty"
-                                            value={row.cantidad}
-                                            onChange={e => {
-                                                const nr = [...bulkRows];
-                                                nr[i].cantidad = e.target.value;
-                                                setBulkRows(nr);
-                                            }}
-                                        />
-                                        <button type="button" className="remove-btn" onClick={() => {
-                                            if (bulkRows.length > 1) setBulkRows(bulkRows.filter((_, j) => j !== i));
-                                        }}>
-                                            <X size={16} />
-                                        </button>
-                                    </div>
-                                ))}
+                                                <X size={14} />
+                                            </button>
+                                        </div>
+                                    );
+                                })}
                                 <button type="button" className="btn btn-secondary btn-sm" style={{ marginTop: 8 }}
-                                    onClick={() => setBulkRows([...bulkRows, { material_id: '', cantidad: '' }])}>
+                                    onClick={() => setBulkRows([...bulkRows, { material_id: '', cantidad: '', search: '' }])}>
                                     <Plus size={14} /> Agregar fila
                                 </button>
                                 <div className="form-actions">
@@ -614,6 +783,125 @@ export default function Inventario() {
                                     <button type="submit" className="btn btn-success">Registrar Todo</button>
                                 </div>
                             </form>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Importar Excel */}
+            {showExcelImport && (
+                <div className="modal-overlay" onClick={() => setShowExcelImport(false)}>
+                    <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3><FileSpreadsheet size={18} style={{ marginRight: 8, verticalAlign: 'middle' }} />Importar Materiales desde Excel</h3>
+                            <button className="modal-close" onClick={() => setShowExcelImport(false)}><X size={18} /></button>
+                        </div>
+                        <div className="modal-body">
+                            {excelPreview.length === 0 ? (
+                                <>
+                                    <div style={{ marginBottom: 16 }}>
+                                        <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                                            Suba un archivo Excel (.xlsx) con los materiales a importar. Los materiales existentes se les sumará el stock; los nuevos se crearán automáticamente.
+                                        </p>
+                                        <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 'var(--radius-sm)', padding: 16, marginBottom: 16 }}>
+                                            <p style={{ fontSize: 12, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 8 }}>📋 Formato requerido del Excel:</p>
+                                            <div className="table-container" style={{ marginBottom: 0 }}>
+                                                <table style={{ fontSize: 12 }}>
+                                                    <thead>
+                                                        <tr>
+                                                            <th style={{ background: 'var(--accent-blue)', color: '#fff' }}>CÓDIGO</th>
+                                                            <th style={{ background: 'var(--accent-blue)', color: '#fff' }}>MATERIAL</th>
+                                                            <th style={{ background: 'var(--accent-blue)', color: '#fff' }}>UNIDAD</th>
+                                                            <th style={{ background: 'var(--accent-blue)', color: '#fff' }}>STOCK</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        <tr>
+                                                            <td style={{ color: 'var(--text-muted)' }}>ABR-001</td>
+                                                            <td>ABRAZADERA CRUCE</td>
+                                                            <td style={{ color: 'var(--text-muted)' }}>unidad</td>
+                                                            <td style={{ fontWeight: 600, color: 'var(--accent-green)' }}>500</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td style={{ color: 'var(--text-muted)' }}>TUB-002</td>
+                                                            <td>TUBO GALVANIZADO 3M</td>
+                                                            <td style={{ color: 'var(--text-muted)' }}>unidad</td>
+                                                            <td style={{ fontWeight: 600, color: 'var(--accent-green)' }}>120</td>
+                                                        </tr>
+                                                        <tr>
+                                                            <td style={{ color: 'var(--text-muted)' }}>CAB-010</td>
+                                                            <td>CABLE FIBRA ÓPTICA</td>
+                                                            <td style={{ color: 'var(--text-muted)' }}>metros</td>
+                                                            <td style={{ fontWeight: 600, color: 'var(--accent-green)' }}>2000</td>
+                                                        </tr>
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                            <p style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 8 }}>
+                                                * Las columnas <strong>Material</strong> y <strong>Stock</strong> son obligatorias. Código y Unidad son opcionales (si no se indica unidad, se usará "unidad" por defecto).
+                                            </p>
+                                        </div>
+                                    </div>
+                                    <input type="file" accept=".xlsx,.xls" onChange={handleExcelFile} className="form-input" style={{ padding: 8 }} />
+                                    {excelError && (
+                                        <div style={{ marginTop: 12, padding: '10px 14px', background: 'rgba(239,68,68,0.1)', border: '1px solid var(--accent-red)', borderRadius: 'var(--radius-sm)', fontSize: 13, color: 'var(--accent-red)' }}>
+                                            ⚠ {excelError}
+                                        </div>
+                                    )}
+                                </>
+                            ) : (
+                                <>
+                                    <p style={{ fontSize: 13, color: 'var(--text-secondary)', marginBottom: 12 }}>
+                                        Se encontraron <strong style={{ color: 'var(--accent-green)' }}>{excelPreview.length}</strong> materiales válidos. Revise antes de confirmar:
+                                    </p>
+                                    <div className="table-container" style={{ maxHeight: 300, overflowY: 'auto' }}>
+                                        <table style={{ fontSize: 12 }}>
+                                            <thead>
+                                                <tr>
+                                                    <th>Código</th>
+                                                    <th>Material</th>
+                                                    <th>Unidad</th>
+                                                    <th style={{ textAlign: 'center' }}>Stock</th>
+                                                    <th style={{ textAlign: 'center' }}>Estado</th>
+                                                </tr>
+                                            </thead>
+                                            <tbody>
+                                                {excelPreview.map((row, i) => {
+                                                    const exists = materiales.some(m =>
+                                                        m.nombre.toUpperCase() === row.nombre ||
+                                                        (row.codigo && m.codigo && m.codigo.toUpperCase() === row.codigo.toUpperCase())
+                                                    );
+                                                    return (
+                                                        <tr key={i}>
+                                                            <td style={{ color: 'var(--text-muted)' }}>{row.codigo || '—'}</td>
+                                                            <td style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{row.nombre}</td>
+                                                            <td style={{ color: 'var(--text-muted)' }}>{row.unidad}</td>
+                                                            <td style={{ textAlign: 'center', fontWeight: 600, color: 'var(--accent-green)' }}>{row.stock}</td>
+                                                            <td style={{ textAlign: 'center' }}>
+                                                                <span style={{
+                                                                    fontSize: 11, padding: '2px 8px', borderRadius: 10,
+                                                                    background: exists ? 'rgba(59,130,246,0.15)' : 'rgba(16,185,129,0.15)',
+                                                                    color: exists ? 'var(--accent-blue)' : 'var(--accent-green)'
+                                                                }}>
+                                                                    {exists ? 'Sumar stock' : 'Nuevo'}
+                                                                </span>
+                                                            </td>
+                                                        </tr>
+                                                    );
+                                                })}
+                                            </tbody>
+                                        </table>
+                                    </div>
+                                    <div className="form-actions" style={{ marginTop: 16 }}>
+                                        <button type="button" className="btn btn-secondary" onClick={() => { setExcelPreview([]); setExcelError(''); }}>
+                                            Cambiar archivo
+                                        </button>
+                                        <button type="button" className="btn btn-success" onClick={handleExcelImport}>
+                                            <Upload size={14} /> Confirmar Importación ({excelPreview.length})
+                                        </button>
+                                    </div>
+                                </>
+                            )}
                         </div>
                     </div>
                 </div>
