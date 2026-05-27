@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import CountUp from '../components/CountUp';
+import SearchableSelect from '../components/SearchableSelect';
 
 export default function Inventario() {
     const toast = useToast();
@@ -619,15 +620,20 @@ export default function Inventario() {
                                     </div>
                                     <div className="form-group">
                                         <label>Unidad</label>
-                                        <select className="form-select" value={newMaterial.unidad}
-                                            onChange={e => setNewMaterial({ ...newMaterial, unidad: e.target.value })}>
-                                            <option value="unidad">Unidad</option>
-                                            <option value="metros">Metros</option>
-                                            <option value="pies">Pies</option>
-                                            <option value="kg">Kilogramos</option>
-                                            <option value="rollo">Rollo</option>
-                                            <option value="caja">Caja</option>
-                                        </select>
+                                        <SearchableSelect
+                                            value={newMaterial.unidad}
+                                            onChange={val => setNewMaterial({ ...newMaterial, unidad: val })}
+                                            placeholder="Seleccionar unidad..."
+                                            searchPlaceholder="Buscar..."
+                                            options={[
+                                                { value: 'unidad', label: 'Unidad' },
+                                                { value: 'metros', label: 'Metros' },
+                                                { value: 'pies', label: 'Pies' },
+                                                { value: 'kg', label: 'Kilogramos' },
+                                                { value: 'rollo', label: 'Rollo' },
+                                                { value: 'caja', label: 'Caja' },
+                                            ]}
+                                        />
                                     </div>
                                 </div>
                                 <div className="form-actions">
@@ -652,13 +658,16 @@ export default function Inventario() {
                             <form onSubmit={handleEntrada}>
                                 <div className="form-group">
                                     <label>Material *</label>
-                                    <select className="form-select" required value={entradaForm.material_id}
-                                        onChange={e => setEntradaForm({ ...entradaForm, material_id: e.target.value })}>
-                                        <option value="">Seleccionar material...</option>
-                                        {materiales.map(m => (
-                                            <option key={m.id} value={m.id}>{m.codigo ? `[${m.codigo}] ` : ''}{m.nombre}</option>
-                                        ))}
-                                    </select>
+                                    <SearchableSelect
+                                        value={entradaForm.material_id}
+                                        onChange={val => setEntradaForm({ ...entradaForm, material_id: val })}
+                                        placeholder="Seleccionar material..."
+                                        searchPlaceholder="Buscar material..."
+                                        options={materiales.map(m => ({
+                                            value: m.id,
+                                            label: m.codigo ? `[${m.codigo}] ${m.nombre}` : m.nombre,
+                                        }))}
+                                    />
                                 </div>
                                 <div className="form-group">
                                     <label>Cantidad *</label>

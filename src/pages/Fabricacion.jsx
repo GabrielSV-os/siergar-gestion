@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { useToast } from '../components/Toast';
+import SearchableSelect from '../components/SearchableSelect';
 import {
     Hammer, Plus, X, ArrowLeft, Search, Trash2, Edit2, Package, TrendingUp, TrendingDown,
     DollarSign, Settings2, Check, AlertTriangle
@@ -14,6 +15,7 @@ export default function Fabricacion() {
     const [lotes, setLotes] = useState([]);
     const [loading, setLoading] = useState(true);
     const [search, setSearch] = useState('');
+    const [searchLoteMateriales, setSearchLoteMateriales] = useState('');
 
     // Selected lote
     const [selectedLote, setSelectedLote] = useState(null);
@@ -378,6 +380,15 @@ export default function Fabricacion() {
                 )}
 
                 {/* Materials table */}
+                <div className="search-bar" style={{ marginBottom: 12 }}>
+                    <Search size={16} />
+                    <input
+                        type="text"
+                        placeholder="Buscar material..."
+                        value={searchLoteMateriales}
+                        onChange={e => setSearchLoteMateriales(e.target.value)}
+                    />
+                </div>
                 <div className="table-container">
                     <table>
                         <thead>
@@ -390,7 +401,7 @@ export default function Fabricacion() {
                             </tr>
                         </thead>
                         <tbody>
-                            {loteMateriales.length > 0 ? loteMateriales.map(m => (
+                            {loteMateriales.filter(m => m.fabricacion_catalogo?.nombre?.toLowerCase().includes(searchLoteMateriales.toLowerCase())).length > 0 ? loteMateriales.filter(m => m.fabricacion_catalogo?.nombre?.toLowerCase().includes(searchLoteMateriales.toLowerCase())).map(m => (
                                 <tr key={m.id}>
                                     <td style={{ fontWeight: 500, color: 'var(--text-primary)' }}>
                                         {m.fabricacion_catalogo?.nombre || '—'}
@@ -448,23 +459,25 @@ export default function Fabricacion() {
                                         <div key={idx} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 120px 32px', gap: 8, marginBottom: 8, alignItems: 'end' }}>
                                             <div className="form-group" style={{ margin: 0 }}>
                                                 {idx === 0 && <label>Material</label>}
-                                                <select className="form-select" value={row.catalogo_id} onChange={e => {
-                                                    const rows = [...materialRows];
-                                                    rows[idx].catalogo_id = e.target.value;
-                                                    const cat = catalogo.find(c => c.id === e.target.value);
-                                                    if (cat) rows[idx].precio_unitario = cat.precio_estandar;
-                                                    setMaterialRows(rows);
-                                                }} required>
-                                                    <option value="">Seleccionar...</option>
-                                                    {catalogo.filter(c => {
+                                                <SearchableSelect
+                                                    value={row.catalogo_id}
+                                                    onChange={val => {
+                                                        const rows = [...materialRows];
+                                                        rows[idx].catalogo_id = val;
+                                                        const cat = catalogo.find(c => c.id === val);
+                                                        if (cat) rows[idx].precio_unitario = cat.precio_estandar;
+                                                        setMaterialRows(rows);
+                                                    }}
+                                                    placeholder="Seleccionar..."
+                                                    searchPlaceholder="Buscar material..."
+                                                    required
+                                                    options={catalogo.filter(c => {
                                                         if (c.id === row.catalogo_id) return true;
                                                         const usedInRows = materialRows.some((r, i) => i !== idx && r.catalogo_id === c.id);
                                                         const usedInLote = loteMateriales.some(m => m.catalogo_id === c.id);
                                                         return !usedInRows && !usedInLote;
-                                                    }).map(c => (
-                                                        <option key={c.id} value={c.id}>{c.nombre}</option>
-                                                    ))}
-                                                </select>
+                                                    }).map(c => ({ value: c.id, label: c.nombre }))}
+                                                />
                                             </div>
                                             <div className="form-group" style={{ margin: 0 }}>
                                                 {idx === 0 && <label>Cantidad</label>}
@@ -713,13 +726,19 @@ export default function Fabricacion() {
                                     </div>
                                     <div className="form-group">
                                         <label>Unidad</label>
-                                        <select className="form-select" value={catForm.unidad} onChange={e => setCatForm({ ...catForm, unidad: e.target.value })}>
-                                            <option value="unidad">Unidad</option>
-                                            <option value="kg">Kg</option>
-                                            <option value="m">Metro</option>
-                                            <option value="litro">Litro</option>
-                                            <option value="pie">Pie</option>
-                                        </select>
+                                        <SearchableSelect
+                                            value={catForm.unidad}
+                                            onChange={val => setCatForm({ ...catForm, unidad: val })}
+                                            placeholder="Seleccionar..."
+                                            searchPlaceholder="Buscar unidad..."
+                                            options={[
+                                                { value: 'unidad', label: 'Unidad' },
+                                                { value: 'kg', label: 'Kg' },
+                                                { value: 'm', label: 'Metro' },
+                                                { value: 'litro', label: 'Litro' },
+                                                { value: 'pie', label: 'Pie' },
+                                            ]}
+                                        />
                                     </div>
                                 </div>
                             </div>
