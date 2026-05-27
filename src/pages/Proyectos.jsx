@@ -15,22 +15,26 @@ import {
     Chart as ChartJS,
     CategoryScale,
     LinearScale,
+    LogarithmicScale,
     PointElement,
     LineElement,
     BarElement,
+    ArcElement,
     Title,
     Tooltip,
     Legend,
     Filler
 } from 'chart.js';
-import { Line, Bar } from 'react-chartjs-2';
+import { Line, Bar, Doughnut } from 'react-chartjs-2';
 
 ChartJS.register(
     CategoryScale,
     LinearScale,
+    LogarithmicScale,
     PointElement,
     LineElement,
     BarElement,
+    ArcElement,
     Title,
     Tooltip,
     Legend,
@@ -106,6 +110,9 @@ export default function Proyectos() {
     const [proyectoGastos, setProyectoGastos] = useState([]);
     const [showAddAlmacen, setShowAddAlmacen] = useState(false);
     const [almacenRows, setAlmacenRows] = useState([{ material_id: '', cantidad: '' }]);
+    const [showEntradaDirecta, setShowEntradaDirecta] = useState(false);
+    const [entradaDirectaRows, setEntradaDirectaRows] = useState([{ material_id: '', cantidad: '', observaciones: '' }]);
+    const [showAlmacenDropdown, setShowAlmacenDropdown] = useState(false);
     const [showDevolucion, setShowDevolucion] = useState(false);
     const [devolucionRows, setDevolucionRows] = useState([{ material_id: '', cantidad: '', observaciones: '' }]);
     const [showAddGasto, setShowAddGasto] = useState(false);
@@ -506,6 +513,58 @@ export default function Proyectos() {
             setAlmacenRows([{ material_id: '', cantidad: '' }]); setShowAddAlmacen(false);
             loadProyectoDetail(selectedProyecto, true);
             const { data: matData } = await supabase.from('materiales').select('*, inventario(cantidad)').order('nombre'); setMateriales(matData || []);
+        } finally {
+            setIsSubmitting(false);
+        }
+    }
+
+    // ========== ENTRADA DIRECTA AL PROYECTO ==========
+    async function handleEntradaDirecta(e) {
+        e.preventDefault();
+        if (isSubmitting) return;
+        setIsSubmitting(true);
+        try {
+            const validRows = entradaDirectaRows.filter(r => r.material_id && parseInt(r.cantidad, 10) > 0);
+            if (validRows.length === 0) { toast('Agregue al menos un material con cantidad válida', 'error'); return; }
+
+            for (const row of validRows) {
+                const qty = parseInt(row.cantidad, 10);
+                const obs = row.observaciones?.trim() || '';
+
+                // Update proyecto_inventario (create or increment)
+                const existing = proyectoInventario.find(pi => pi.material_id === row.material_id);
+                if (existing) {
+                    await supabase.from('proyecto_inventario').update({ cantidad: existing.cantidad + qty }).eq('id', existing.id);
+                } else {
+                    await supabase.from('proyecto_inventario').insert({ proyecto_id: selectedProyecto.id, material_id: row.material_id, cantidad: qty });
+                }
+
+                // Log in movimientos_inventario as 'entrada' so it appears in Inventario > Historial
+                await supabase.from('movimientos_inventario').insert({
+                    material_id: row.material_id,
+                    tipo: 'entrada',
+                    cantidad: qty,
+                    descripcion: `Entrada directa al proyecto: ${selectedProyecto.nombre}${obs ? ` — ${obs}` : ''}`,
+                    proyecto_id: selectedProyecto.id
+                });
+            }
+
+            const desc = validRows.map(r => {
+                const m = materiales.find(m => m.id === r.material_id);
+                return `${m?.nombre || 'Material'}: ${r.cantidad}`;
+            }).join(', ');
+
+            await supabase.from('proyecto_historial').insert({
+                proyecto_id: selectedProyecto.id,
+                estado_anterior: selectedProyecto.estado,
+                estado_nuevo: selectedProyecto.estado,
+                motivo: `Entrada directa de materiales al proyecto: ${desc}`
+            });
+
+            toast(`${validRows.length} material(es) ingresado(s) directamente al proyecto`);
+            setEntradaDirectaRows([{ material_id: '', cantidad: '', observaciones: '' }]);
+            setShowEntradaDirecta(false);
+            loadProyectoDetail(selectedProyecto, true);
         } finally {
             setIsSubmitting(false);
         }
@@ -1647,11 +1706,14 @@ export default function Proyectos() {
                                             '#14b8a6', '#e11d48', '#8b5cf6', '#22d3ee', '#facc15'
                                         ];
 
+                                        const truncate = (str, n = 22) => str.length > n ? str.slice(0, n) + '…' : str;
+
                                         const datasets = Object.keys(materialMap).map((materialName, idx) => {
                                             const color = chartColors[idx % chartColors.length];
                                             return {
-                                                label: materialName,
-                                                data: allDates.map(d => materialMap[materialName][d] || 0),
+                                                label: materialName,          // full name — used in tooltips
+                                                shortLabel: truncate(materialName), // truncated — used in legend
+                                                data: allDates.map(d => materialMap[materialName][d] || null),
                                                 borderColor: color,
                                                 backgroundColor: color + '20',
                                                 tension: 0.4,
@@ -1661,7 +1723,8 @@ export default function Proyectos() {
                                                 pointBorderColor: '#fff',
                                                 pointBorderWidth: 2,
                                                 borderWidth: 2.5,
-                                                fill: false
+                                                fill: false,
+                                                spanGaps: true
                                             };
                                         });
 
@@ -1682,8 +1745,8 @@ export default function Proyectos() {
                                                 delay: (ctx) => ctx.dataIndex * 80 + ctx.datasetIndex * 150
                                             },
                                             interaction: {
-                                                mode: 'index',
-                                                intersect: false
+                                                mode: 'nearest',
+                                                intersect: true
                                             },
                                             plugins: {
                                                 legend: {
@@ -1693,7 +1756,18 @@ export default function Proyectos() {
                                                         padding: 16,
                                                         usePointStyle: true,
                                                         pointStyle: 'circle',
-                                                        font: { size: 12, family: 'Inter' }
+                                                        font: { size: 12, family: 'Inter' },
+                                                        generateLabels: (chart) => {
+                                                            return chart.data.datasets.map((ds, i) => ({
+                                                                text: ds.shortLabel || ds.label,
+                                                                fillStyle: ds.borderColor,
+                                                                strokeStyle: ds.borderColor,
+                                                                lineWidth: 2,
+                                                                hidden: !chart.isDatasetVisible(i),
+                                                                datasetIndex: i,
+                                                                pointStyle: 'circle'
+                                                            }));
+                                                        }
                                                     }
                                                 },
                                                 tooltip: {
@@ -1702,7 +1776,15 @@ export default function Proyectos() {
                                                     bodyFont: { size: 12, family: 'Inter' },
                                                     padding: 12,
                                                     cornerRadius: 8,
-                                                    displayColors: true
+                                                    displayColors: true,
+                                                    callbacks: {
+                                                        // Show full material name in tooltip body
+                                                        label: (ctx) => {
+                                                            const fullName = ctx.dataset.label;
+                                                            const val = ctx.parsed?.y;
+                                                            return ` ${fullName}: ${val != null ? val.toLocaleString() : '0'}`;
+                                                        }
+                                                    }
                                                 },
                                                 title: { display: false }
                                             },
@@ -1718,14 +1800,22 @@ export default function Proyectos() {
                                                     }
                                                 },
                                                 y: {
-                                                    beginAtZero: true,
+                                                    type: 'logarithmic',
                                                     grid: {
                                                         color: getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim() || 'rgba(255,255,255,0.06)',
                                                         drawBorder: false
                                                     },
                                                     ticks: {
                                                         color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8',
-                                                        font: { size: 11, family: 'Inter' }
+                                                        font: { size: 11, family: 'Inter' },
+                                                        callback: (value) => {
+                                                            // Only show clean round numbers to avoid clutter
+                                                            const log = Math.log10(value);
+                                                            if (Number.isInteger(log) || [2, 5].includes(value / Math.pow(10, Math.floor(log)))) {
+                                                                return value.toLocaleString();
+                                                            }
+                                                            return '';
+                                                        }
                                                     }
                                                 }
                                             }
@@ -1737,7 +1827,7 @@ export default function Proyectos() {
                             </div>
                         )}
 
-                        {/* Material Usage Chart */}
+                        {/* Material Usage Chart — Doughnut */}
                         {proyectoInventario.length > 0 && (
                             <div className="card" style={{ marginTop: 16 }}>
                                 <div className="card-header">
@@ -1745,96 +1835,109 @@ export default function Proyectos() {
                                 </div>
                                 {(() => {
                                     const materialMap = {};
-
                                     proyectoInventario.forEach(pi => {
                                         if (!materialMap[pi.material_id]) {
                                             materialMap[pi.material_id] = {
-                                                nombre: pi.materiales?.nombre || pi.material?.nombre || 'Desconocido',
+                                                nombre: pi.materiales?.nombre || 'Desconocido',
                                                 inventario: 0,
                                                 consumido: 0
                                             };
                                         }
                                         materialMap[pi.material_id].inventario += Number(pi.cantidad || 0);
                                     });
-
-                                    const consumosReales = consumos.filter(c => c.tipo === 'consumo');
-                                    consumosReales.forEach(c => {
+                                    consumos.filter(c => c.tipo === 'consumo').forEach(c => {
                                         if (materialMap[c.material_id]) {
                                             materialMap[c.material_id].consumido += Number(c.cantidad || 0);
                                         } else {
                                             materialMap[c.material_id] = {
-                                                nombre: c.materiales?.nombre || c.material?.nombre || 'Desconocido',
+                                                nombre: c.materiales?.nombre || 'Desconocido',
                                                 inventario: 0,
                                                 consumido: Number(c.cantidad || 0)
                                             };
                                         }
                                     });
 
-                                    const materialsList = Object.values(materialMap).filter(m => m.inventario > 0 || m.consumido > 0);
+                                    // Top 8 by inventario for readability
+                                    const materialsList = Object.values(materialMap)
+                                        .filter(m => m.inventario > 0 || m.consumido > 0)
+                                        .sort((a, b) => b.inventario - a.inventario)
+                                        .slice(0, 8);
 
                                     if (materialsList.length === 0) return <div className="empty-state"><p>No hay datos de inventario o consumo.</p></div>;
 
-                                    const data = {
-                                        labels: materialsList.map(m => m.nombre),
-                                        datasets: [
-                                            {
-                                                label: 'En Inventario (Proyecto)',
-                                                data: materialsList.map(m => m.inventario),
-                                                backgroundColor: 'rgba(56, 189, 248, 0.8)',
-                                                borderRadius: 4
-                                            },
-                                            {
-                                                label: 'Consumido (Brigadas)',
-                                                data: materialsList.map(m => m.consumido),
-                                                backgroundColor: 'rgba(249, 115, 22, 0.8)',
-                                                borderRadius: 4
-                                            }
-                                        ]
-                                    };
+                                    const palette = [
+                                        '#38bdf8','#f97316','#34d399','#a78bfa',
+                                        '#fb7185','#fbbf24','#60a5fa','#4ade80'
+                                    ];
+                                    const textColor = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1';
+                                    const mutedColor = getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8';
 
-                                    const options = {
+                                    const sharedOptions = {
                                         responsive: true,
                                         maintainAspectRatio: false,
+                                        cutout: '62%',
                                         plugins: {
                                             legend: {
-                                                position: 'bottom',
+                                                position: 'right',
                                                 labels: {
-                                                    color: getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1',
+                                                    color: textColor,
                                                     usePointStyle: true,
-                                                    font: { size: 12, family: 'Inter' }
+                                                    pointStyle: 'circle',
+                                                    font: { size: 11, family: 'Inter' },
+                                                    padding: 10,
+                                                    boxWidth: 8,
+                                                    formatter: (label) => label.length > 22 ? label.slice(0, 22) + '…' : label
                                                 }
                                             },
                                             tooltip: {
                                                 backgroundColor: 'rgba(0,0,0,0.85)',
-                                                titleFont: { size: 13, family: 'Inter' },
-                                                bodyFont: { size: 12, family: 'Inter' },
-                                                padding: 12,
-                                                cornerRadius: 8
-                                            }
-                                        },
-                                        scales: {
-                                            x: {
-                                                grid: { color: getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim() || 'rgba(255,255,255,0.06)', drawBorder: false },
-                                                ticks: {
-                                                    color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8',
-                                                    font: { size: 11, family: 'Inter' },
-                                                    callback: function (value) {
-                                                        const label = this.getLabelForValue(value);
-                                                        return label.length > 15 ? label.substring(0, 15) + '...' : label;
-                                                    }
+                                                titleFont: { size: 12, family: 'Inter' },
+                                                bodyFont: { size: 11, family: 'Inter' },
+                                                padding: 10,
+                                                cornerRadius: 8,
+                                                callbacks: {
+                                                    label: (ctx) => ` ${ctx.label}: ${ctx.parsed.toLocaleString()}`
                                                 }
-                                            },
-                                            y: {
-                                                beginAtZero: true,
-                                                grid: { color: getComputedStyle(document.documentElement).getPropertyValue('--border-color').trim() || 'rgba(255,255,255,0.06)', drawBorder: false },
-                                                ticks: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8', font: { size: 11, family: 'Inter' } }
                                             }
                                         }
                                     };
 
+                                    const inventarioData = {
+                                        labels: materialsList.map(m => m.nombre),
+                                        datasets: [{
+                                            data: materialsList.map(m => m.inventario),
+                                            backgroundColor: palette,
+                                            borderWidth: 2,
+                                            borderColor: 'transparent',
+                                            hoverOffset: 6
+                                        }]
+                                    };
+
+                                    const consumoData = {
+                                        labels: materialsList.map(m => m.nombre),
+                                        datasets: [{
+                                            data: materialsList.map(m => m.consumido),
+                                            backgroundColor: palette,
+                                            borderWidth: 2,
+                                            borderColor: 'transparent',
+                                            hoverOffset: 6
+                                        }]
+                                    };
+
                                     return (
-                                        <div id="chart-inventario-consumo" style={{ height: 250, padding: '0 8px' }}>
-                                            <Bar key={themeTrigger} data={data} options={options} />
+                                        <div id="chart-inventario-consumo" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, padding: '8px 0 16px' }}>
+                                            <div>
+                                                <p style={{ textAlign: 'center', fontSize: 12, color: mutedColor, marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>En Inventario</p>
+                                                <div style={{ height: 220 }}>
+                                                    <Doughnut key={`inv-${themeTrigger}`} data={inventarioData} options={sharedOptions} />
+                                                </div>
+                                            </div>
+                                            <div>
+                                                <p style={{ textAlign: 'center', fontSize: 12, color: mutedColor, marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>Consumido por Brigadas</p>
+                                                <div style={{ height: 220 }}>
+                                                    <Doughnut key={`con-${themeTrigger}`} data={consumoData} options={sharedOptions} />
+                                                </div>
+                                            </div>
                                         </div>
                                     );
                                 })()}
@@ -2380,23 +2483,45 @@ export default function Proyectos() {
                 {/* ===== TAB: ALMACÉN DEL PROYECTO ===== */}
                 {activeTab === 'almacen' && (
                     <div>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                            <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Almacén del Proyecto</h2>
+                        <div style={{ marginBottom: 16 }}>
+                            <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', margin: '0 0 12px 0' }}>Almacén del Proyecto</h2>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                            <div className="search-bar" style={{ flex: 1, marginBottom: 0 }}>
+                                <Search size={16} />
+                                <input
+                                    type="text"
+                                    placeholder="Buscar material..."
+                                    value={searchAlmacen}
+                                    onChange={e => setSearchAlmacen(e.target.value)}
+                                />
+                            </div>
                             {selectedProyecto.estado === 'activo' && (
-                                <button className="btn btn-primary" onClick={() => setShowAddAlmacen(true)}>
-                                    <Plus size={16} /> Agregar Material
-                                </button>
+                                <div style={{ position: 'relative', flexShrink: 0 }}>
+                                    <button
+                                        className="btn btn-primary"
+                                        onClick={() => setShowAlmacenDropdown(!showAlmacenDropdown)}
+                                    >
+                                        <Plus size={16} /> Agregar Material
+                                        <ChevronDown size={14} style={{ marginLeft: 4, transition: 'transform 0.2s', transform: showAlmacenDropdown ? 'rotate(180deg)' : 'rotate(0deg)' }} />
+                                    </button>
+                                    {showAlmacenDropdown && (
+                                        <>
+                                            <div className="animated-dropdown-backdrop" onClick={() => setShowAlmacenDropdown(false)} />
+                                            <div className="animated-dropdown">
+                                                <div className="animated-dropdown-label">Tipo de entrada</div>
+                                                <div className="animated-dropdown-separator" />
+                                                <button className="animated-dropdown-item" onClick={() => { setShowAlmacenDropdown(false); setShowAddAlmacen(true); }}>
+                                                    <Package size={14} /> Desde almacén general
+                                                </button>
+                                                <button className="animated-dropdown-item" onClick={() => { setShowAlmacenDropdown(false); setShowEntradaDirecta(true); }}>
+                                                    <Plus size={14} /> Entrada directa al proyecto
+                                                </button>
+                                            </div>
+                                        </>
+                                    )}
+                                </div>
                             )}
-                        </div>
-
-                        <div className="search-bar" style={{ marginBottom: 12 }}>
-                            <Search size={16} />
-                            <input
-                                type="text"
-                                placeholder="Buscar material..."
-                                value={searchAlmacen}
-                                onChange={e => setSearchAlmacen(e.target.value)}
-                            />
+                            </div>
                         </div>
 
                         <div style={{ marginBottom: 24 }}>
@@ -2635,6 +2760,88 @@ export default function Proyectos() {
                         </div>
                     );
                 })()}
+
+                {/* Modal: Entrada Directa al Proyecto */}
+                {showEntradaDirecta && (
+                    <div className="modal-overlay" onClick={() => setShowEntradaDirecta(false)}>
+                        <div className="modal modal-wide" onClick={e => e.stopPropagation()}>
+                            <div className="modal-header">
+                                <h3>Entrada Directa de Materiales al Proyecto</h3>
+                                <button className="modal-close" onClick={() => setShowEntradaDirecta(false)}><X size={18} /></button>
+                            </div>
+                            <div className="modal-body">
+                                <div style={{
+                                    background: 'rgba(251,191,36,0.08)',
+                                    border: '1px solid rgba(251,191,36,0.3)',
+                                    borderRadius: 'var(--radius-md)',
+                                    padding: '10px 14px',
+                                    marginBottom: 16,
+                                    fontSize: 13,
+                                    color: 'var(--text-secondary)',
+                                    display: 'flex',
+                                    gap: 8,
+                                    alignItems: 'flex-start'
+                                }}>
+                                    <AlertTriangle size={15} style={{ color: '#fbbf24', marginTop: 1, flexShrink: 0 }} />
+                                    <span>
+                                        Estos materiales <strong>no provienen del almacén general</strong> — son materiales recibidos directamente en el proyecto (compra directa, entrega de proveedor en sitio, etc.).
+                                        El stock del almacén general no se verá afectado.
+                                    </span>
+                                </div>
+                                <form onSubmit={handleEntradaDirecta}>
+                                    {entradaDirectaRows.map((row, i) => (
+                                        <div key={i} style={{ marginBottom: 12 }}>
+                                            <div className="bulk-row">
+                                                <SearchableSelect
+                                                    value={row.material_id}
+                                                    onChange={val => setEntradaDirectaRows(entradaDirectaRows.map((r, idx) => idx === i ? { ...r, material_id: val } : r))}
+                                                    placeholder="Seleccionar material..."
+                                                    searchPlaceholder="Buscar material..."
+                                                    options={materiales.map(m => ({ value: m.id, label: `${m.codigo ? `[${m.codigo}] ` : ''}${m.nombre}`, sublabel: m.unidad }))}
+                                                />
+                                                <input
+                                                    className="form-input"
+                                                    type="number" min="1" step="1"
+                                                    placeholder="Cantidad"
+                                                    value={row.cantidad}
+                                                    onChange={e => {
+                                                        const val = e.target.value.replace(/[^0-9]/g, '');
+                                                        setEntradaDirectaRows(entradaDirectaRows.map((r, idx) => idx === i ? { ...r, cantidad: val } : r));
+                                                    }}
+                                                />
+                                                <button type="button" className="remove-btn" onClick={() => { if (entradaDirectaRows.length > 1) setEntradaDirectaRows(entradaDirectaRows.filter((_, j) => j !== i)); }}>
+                                                    <X size={16} />
+                                                </button>
+                                            </div>
+                                            <input
+                                                className="form-input"
+                                                type="text"
+                                                placeholder="Observaciones (opcional)"
+                                                value={row.observaciones}
+                                                onChange={e => setEntradaDirectaRows(entradaDirectaRows.map((r, idx) => idx === i ? { ...r, observaciones: e.target.value } : r))}
+                                                style={{ marginTop: 6, fontSize: 13 }}
+                                            />
+                                        </div>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        className="btn btn-secondary btn-sm"
+                                        style={{ marginTop: 4 }}
+                                        onClick={() => setEntradaDirectaRows([...entradaDirectaRows, { material_id: '', cantidad: '', observaciones: '' }])}
+                                    >
+                                        + Agregar fila
+                                    </button>
+                                    <div className="form-actions">
+                                        <button type="button" className="btn btn-secondary" onClick={() => setShowEntradaDirecta(false)}>Cancelar</button>
+                                        <button type="submit" className="btn btn-primary" disabled={isSubmitting}>
+                                            {isSubmitting ? 'Guardando...' : 'Registrar Entrada'}
+                                        </button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                )}
 
                 {/* Modal: Agregar al Almacén */}
                 {showAddAlmacen && (
