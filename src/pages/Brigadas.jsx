@@ -3,10 +3,11 @@ import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { useToast } from '../components/Toast';
 import {
-    Users, Plus, X, ArrowLeft, Search, UserPlus, UserMinus, History, Shield, Trash2, Edit2, Star, Calendar, Download, MoreVertical
+    Users, Plus, X, ArrowLeft, Search, UserPlus, UserMinus, History, Shield, Trash2, Edit2, Star, Calendar, Download, MoreVertical, ClipboardCheck, ChevronDown, HelpCircle
 } from 'lucide-react';
 import CountUp from '../components/CountUp';
 import AnimatedCheckbox from '../components/AnimatedCheckbox';
+import SearchableSelect from '../components/SearchableSelect';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 
@@ -27,6 +28,11 @@ export default function Brigadas() {
     const [showRemovePersonal, setShowRemovePersonal] = useState(null);
     const [showEditPersonal, setShowEditPersonal] = useState(null);
     const [showActionsDropdown, setShowActionsDropdown] = useState(false);
+    const [showListActionsDropdown, setShowListActionsDropdown] = useState(false);
+
+    // Global Asistencia view
+    const [showGlobalAsistencia, setShowGlobalAsistencia] = useState(false);
+    const [globalAsistenciaTab, setGlobalAsistenciaTab] = useState('pase'); // 'pase' | 'reporte'
 
     // Asistencia states
     const [asistenciaDate, setAsistenciaDate] = useState(new Date().toISOString().split('T')[0]);
@@ -41,11 +47,14 @@ export default function Brigadas() {
         return d.toISOString().split('T')[0];
     });
     const [filterAsistenciaHasta, setFilterAsistenciaHasta] = useState(new Date().toISOString().split('T')[0]);
+    const [filterBrigadaId, setFilterBrigadaId] = useState('all');
+    const [expandedRows, setExpandedRows] = useState({});
+    const [showMedioDiaDialog, setShowMedioDiaDialog] = useState(null); // index into asistenciaRecords
 
     // Forms
     const [brigForm, setBrigForm] = useState({ nombre: '', descripcion: '' });
     const [persForm, setPersForm] = useState({ nombre: '', cedula: '', cargo: '', telefono: '' });
-    const [editPersForm, setEditPersForm] = useState({ nombre: '', cedula: '', cargo: '', telefono: '' });
+    const [editPersForm, setEditPersForm] = useState({ nombre: '', cedula: '', cargo: '', telefono: '', activo: true });
     const [asignarPersonalId, setAsignarPersonalId] = useState('');
     const [motivoSalida, setMotivoSalida] = useState('');
 
@@ -112,110 +121,146 @@ export default function Brigadas() {
         setHistorial(histRes.data || []);
     }
 
+    // Load global asistencia when entering the view
     useEffect(() => {
-        if (selectedBrigada && activeTab === 'asistencia') {
-            loadAsistencia(selectedBrigada.id, asistenciaDate);
-            loadAsistenciaHistory(selectedBrigada.id, filterAsistenciaDesde, filterAsistenciaHasta);
+        if (showGlobalAsistencia && globalAsistenciaTab === 'pase') {
+            loadGlobalAsistencia(asistenciaDate);
         }
-    }, [selectedBrigada, activeTab, asistenciaDate, brigadaPersonal, filterAsistenciaDesde, filterAsistenciaHasta]);
+    }, [showGlobalAsistencia, globalAsistenciaTab, asistenciaDate, brigadas]);
 
-    async function loadAsistencia(brigadaId, date) {
-        const { data } = await supabase.from('brigada_asistencia')
+    useEffect(() => {
+        if (showGlobalAsistencia && globalAsistenciaTab === 'reporte') {
+            loadGlobalAsistenciaHistory(filterAsistenciaDesde, filterAsistenciaHasta, filterBrigadaId);
+        }
+    }, [showGlobalAsistencia, globalAsistenciaTab, filterAsistenciaDesde, filterAsistenciaHasta, filterBrigadaId]);
+
+    async function loadGlobalAsistencia(date) {
+        // Load all active brigade members with their brigade info (only enabled personal)
+        const { data: allMembers } = await supabase.from('brigada_personal')
+            .select('personal_id, brigada_id, es_lider, personal(nombre, cargo, activo), brigadas(nombre)')
+            .eq('activo', true)
+            .order('es_lider', { ascending: false });
+
+        if (!allMembers || allMembers.length === 0) {
+            setAsistenciaRecords([]);
+            return;
+        }
+
+        // Filter out disabled personal
+        const enabledMembers = allMembers.filter(m => m.personal?.activo !== false);
+
+        // Load existing attendance for this date
+        const { data: existing } = await supabase.from('brigada_asistencia')
             .select('*')
-            .eq('brigada_id', brigadaId)
             .eq('fecha', date);
 
-        const records = brigadaPersonal.map(bp => {
-            const saved = data?.find(d => d.personal_id === bp.personal_id);
+        const records = enabledMembers.map(m => {
+            const saved = existing?.find(d => d.personal_id === m.personal_id && d.brigada_id === m.brigada_id);
             return {
-                personal_id: bp.personal_id,
-                nombre: bp.personal.personal?.nombre || bp.personal?.nombre, // handle mapping structures safely
-                cargo: bp.personal.personal?.cargo || bp.personal?.cargo,
-                asistio: saved ? saved.asistio : false
+                personal_id: m.personal_id,
+                brigada_id: m.brigada_id,
+                brigada_nombre: m.brigadas?.nombre || 'Sin Brigada',
+                nombre: m.personal?.nombre || 'Desconocido',
+                cargo: m.personal?.cargo || '—',
+                es_lider: m.es_lider,
+                asistio: saved ? saved.asistio : false,
+                medio_dia: saved ? (saved.medio_dia || false) : false
             };
         });
         setAsistenciaRecords(records);
     }
 
-    async function loadAsistenciaHistory(brigadaId, desde, hasta) {
+    async function loadGlobalAsistenciaHistory(desde, hasta, brigadaFilter) {
         if (!desde || !hasta) return;
 
-        // Cargar todo el historial del periodo
-        const { data } = await supabase.from('brigada_asistencia')
-            .select('fecha, asistio, personal_id, personal(nombre, cargo)')
-            .eq('brigada_id', brigadaId)
+        let query = supabase.from('brigada_asistencia')
+            .select('fecha, asistio, medio_dia, personal_id, brigada_id, personal(nombre, cargo), brigadas(nombre)')
             .gte('fecha', desde)
             .lte('fecha', hasta)
             .order('fecha', { ascending: true });
 
+        if (brigadaFilter && brigadaFilter !== 'all') {
+            query = query.eq('brigada_id', brigadaFilter);
+        }
+
+        const { data } = await query;
         if (!data) return;
 
-        // Group by personal
         const summary = data.reduce((acc, curr) => {
-            const pId = curr.personal_id;
-            if (!acc[pId]) {
-                acc[pId] = {
+            const key = `${curr.personal_id}_${curr.brigada_id}`;
+            if (!acc[key]) {
+                acc[key] = {
                     nombre: curr.personal?.nombre || 'Desconocido',
                     cargo: curr.personal?.cargo || 'Sin Cargo',
+                    brigada: curr.brigadas?.nombre || 'Sin Brigada',
                     asistencias: 0,
+                    mediosDia: 0,
                     ausencias: 0,
                     total: 0,
                     fechasAsistidas: [],
+                    fechasMedioDia: [],
                     fechasAusentes: []
                 };
             }
 
-            // Format fecha from YYYY-MM-DD to DD/MM
             const parts = curr.fecha.split('-');
             const formatDia = `${parts[2]}/${parts[1]}`;
 
-            acc[pId].total += 1;
+            acc[key].total += 1;
             if (curr.asistio) {
-                acc[pId].asistencias += 1;
-                acc[pId].fechasAsistidas.push(formatDia);
+                if (curr.medio_dia) {
+                    acc[key].mediosDia += 1;
+                    acc[key].asistencias += 0.5;
+                    acc[key].fechasMedioDia.push(formatDia);
+                } else {
+                    acc[key].asistencias += 1;
+                    acc[key].fechasAsistidas.push(formatDia);
+                }
             } else {
-                acc[pId].ausencias += 1;
-                acc[pId].fechasAusentes.push(formatDia);
+                acc[key].ausencias += 1;
+                acc[key].fechasAusentes.push(formatDia);
             }
             return acc;
         }, {});
 
-        const historyList = Object.values(summary).sort((a, b) => a.nombre.localeCompare(b.nombre));
+        const historyList = Object.values(summary).sort((a, b) => {
+            const brigCmp = a.brigada.localeCompare(b.brigada);
+            return brigCmp !== 0 ? brigCmp : a.nombre.localeCompare(b.nombre);
+        });
         setAsistenciaHistory(historyList);
     }
 
-    async function handleSaveAsistencia() {
-        if (!selectedBrigada) return;
+    async function handleSaveGlobalAsistencia() {
         setIsSavingAsistencia(true);
         try {
             const upserts = asistenciaRecords.map(r => ({
-                brigada_id: selectedBrigada.id,
+                brigada_id: r.brigada_id,
                 personal_id: r.personal_id,
                 fecha: asistenciaDate,
-                asistio: r.asistio
+                asistio: r.asistio,
+                medio_dia: r.medio_dia || false
             }));
 
             const { error } = await supabase.from('brigada_asistencia').upsert(upserts, { onConflict: 'brigada_id,personal_id,fecha' });
             if (error) { toast(error.message, 'error'); return; }
             toast('Asistencia guardada correctamente');
-            loadAsistenciaHistory(selectedBrigada.id, filterAsistenciaDesde, filterAsistenciaHasta);
         } finally {
             setIsSavingAsistencia(false);
         }
     }
 
-    function exportAsistenciaToPDF() {
-        if (!selectedBrigada) return;
+    function exportGlobalAsistenciaToPDF() {
         const doc = new jsPDF();
         const blue = [33, 63, 115];
 
         doc.setFontSize(20);
         doc.setTextColor(...blue);
-        doc.text(`Reporte de Nómina / Asistencia`, 14, 22);
+        doc.text('Reporte de Nómina / Asistencia', 14, 22);
 
         doc.setFontSize(12);
         doc.setTextColor(60, 60, 60);
-        doc.text(`Brigada: ${selectedBrigada.nombre}`, 14, 30);
+        const brigadaLabel = filterBrigadaId === 'all' ? 'Todas las Brigadas' : brigadas.find(b => b.id === filterBrigadaId)?.nombre || '';
+        doc.text(`Brigada: ${brigadaLabel}`, 14, 30);
         doc.text(`Desde: ${filterAsistenciaDesde.split('-').reverse().join('/')}  -  Hasta: ${filterAsistenciaHasta.split('-').reverse().join('/')}`, 14, 38);
 
         const tableData = asistenciaHistory.map(h => {
@@ -224,30 +269,32 @@ export default function Brigadas() {
 
             return [
                 h.nombre,
+                h.brigada,
                 h.cargo,
                 diasAsistidos,
                 diasAusentes,
-                `${Math.round((h.asistencias / h.total) * 100)}%`
+                `${h.total > 0 ? Math.round((h.asistencias / h.total) * 100) : 0}%`
             ];
         });
 
         autoTable(doc, {
             startY: 46,
-            head: [['Personal', 'Cargo', 'Días Asistidos', 'Días Ausentes', 'Asistencia']],
+            head: [['Personal', 'Brigada', 'Cargo', 'Días Asistidos', 'Días Ausentes', 'Asistencia']],
             body: tableData,
             theme: 'grid',
             headStyles: { fillColor: blue, textColor: [255, 255, 255] },
             styles: { cellPadding: 4, valign: 'middle' },
             columnStyles: {
-                0: { cellWidth: 35 },
-                1: { cellWidth: 30 },
-                2: { cellWidth: 50 },
-                3: { cellWidth: 50 },
-                4: { cellWidth: 20, halign: 'center' }
+                0: { cellWidth: 30 },
+                1: { cellWidth: 25 },
+                2: { cellWidth: 25 },
+                3: { cellWidth: 40 },
+                4: { cellWidth: 40 },
+                5: { cellWidth: 20, halign: 'center' }
             }
         });
 
-        doc.save(`Nomina_${selectedBrigada.nombre.replace(/\s+/g, '_')}_${filterAsistenciaDesde}_al_${filterAsistenciaHasta}.pdf`);
+        doc.save(`Nomina_General_${filterAsistenciaDesde}_al_${filterAsistenciaHasta}.pdf`);
     }
 
     async function handleCreateBrigada(e) {
@@ -277,16 +324,10 @@ export default function Brigadas() {
         const exists = brigadaPersonal.find(bp => bp.personal_id === asignarPersonalId);
         if (exists) { toast('Esta persona ya está en la brigada', 'error'); return; }
 
-        // Check if person is active in another brigade
-        const { data: activeBp } = await supabase.from('brigada_personal')
-            .select('*, brigadas(nombre)')
-            .eq('personal_id', asignarPersonalId)
-            .eq('activo', true)
-            .limit(1);
-        if (activeBp && activeBp.length > 0) {
-            const brigadaNombre = activeBp[0].brigadas?.nombre || 'otra brigada';
-            toast(`Esta persona ya está asignada a "${brigadaNombre}". Debe removerla primero antes de reasignarla.`, 'error');
-            return;
+        // Re-enable if disabled
+        const persona = personal.find(p => p.id === asignarPersonalId);
+        if (persona && persona.activo === false) {
+            await supabase.from('personal').update({ activo: true }).eq('id', asignarPersonalId);
         }
 
         // Assign to this brigade
@@ -295,10 +336,11 @@ export default function Brigadas() {
             personal_id: asignarPersonalId
         });
         if (error) { toast(error.message, 'error'); return; }
-        toast('Personal asignado a la brigada');
+        toast(persona?.activo === false ? 'Personal rehabilitado y asignado a la brigada' : 'Personal asignado a la brigada');
         setAsignarPersonalId('');
         setShowAsignarPersonal(false);
         loadBrigadaDetail(selectedBrigada);
+        loadData();
     }
 
     async function handleRemovePersonal(bpId) {
@@ -318,9 +360,23 @@ export default function Brigadas() {
 
     async function handleEditPersonalDetails(e) {
         e.preventDefault();
+        const wasActive = personal.find(p => p.id === showEditPersonal)?.activo !== false;
+        const nowDisabled = editPersForm.activo === false;
+
         const { error } = await supabase.from('personal').update(editPersForm).eq('id', showEditPersonal);
         if (error) { toast(error.message, 'error'); return; }
-        toast('Personal actualizado correctamente');
+
+        // Si se deshabilitó, remover de todas las brigadas activas
+        if (wasActive && nowDisabled) {
+            await supabase.from('brigada_personal')
+                .update({ activo: false, fecha_salida: new Date().toISOString().split('T')[0], motivo_cambio: 'Personal deshabilitado' })
+                .eq('personal_id', showEditPersonal)
+                .eq('activo', true);
+            toast('Personal deshabilitado y removido de la brigada');
+        } else {
+            toast('Personal actualizado correctamente');
+        }
+
         setShowEditPersonal(null);
         loadData();
         if (selectedBrigada) {
@@ -347,10 +403,381 @@ export default function Brigadas() {
 
     if (loading) return <div className="loading-spinner" />;
 
+    // GLOBAL ASISTENCIA VIEW
+    if (showGlobalAsistencia) {
+        // Sort records alphabetically
+        const sortedRecords = [...asistenciaRecords].sort((a, b) => a.nombre.localeCompare(b.nombre));
+
+        const totalPersonal = asistenciaRecords.length;
+        const totalPresentes = asistenciaRecords.filter(r => r.asistio).length;
+
+        return (
+            <div>
+                <div className="detail-header">
+                    <button className="detail-back-btn" onClick={() => setShowGlobalAsistencia(false)}>
+                        <ArrowLeft size={18} />
+                    </button>
+                    <div style={{ flex: 1 }}>
+                        <h2>Asistencia General</h2>
+                        <p className="page-header-subtitle">Pase de lista para todo el personal</p>
+                    </div>
+                </div>
+
+                <div className="card-grid">
+                    <div className="stat-card">
+                        <div className="stat-icon blue"><Users size={20} /></div>
+                        <div className="stat-info">
+                            <h4><CountUp from={0} to={totalPersonal} duration={1} /></h4>
+                            <p>Personal total</p>
+                        </div>
+                    </div>
+                    <div className="stat-card">
+                        <div className="stat-icon green"><ClipboardCheck size={20} /></div>
+                        <div className="stat-info">
+                            <h4><CountUp from={0} to={totalPresentes} duration={1} /></h4>
+                            <p>Presentes</p>
+                        </div>
+                    </div>
+                    <div className="stat-card">
+                        <div className="stat-icon" style={{ background: 'rgba(239, 68, 68, 0.15)', color: 'var(--accent-red)' }}><UserMinus size={20} /></div>
+                        <div className="stat-info">
+                            <h4><CountUp from={0} to={totalPersonal - totalPresentes} duration={1} /></h4>
+                            <p>Ausentes</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="tabs" style={{ marginTop: 16 }}>
+                    <button className={`tab ${globalAsistenciaTab === 'pase' ? 'active' : ''}`} onClick={() => setGlobalAsistenciaTab('pase')}>
+                        Pase de Lista
+                    </button>
+                    <button className={`tab ${globalAsistenciaTab === 'reporte' ? 'active' : ''}`} onClick={() => setGlobalAsistenciaTab('reporte')}>
+                        Reporte de Nómina
+                    </button>
+                </div>
+
+                {globalAsistenciaTab === 'pase' && (
+                    <div>
+                        <div className="filter-bar" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
+                            <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
+                                <div className="search-box" style={{ width: 'auto' }}>
+                                    <Calendar className="search-icon" size={18} />
+                                    <input
+                                        type="date"
+                                        className="search-input"
+                                        value={asistenciaDate}
+                                        onChange={e => setAsistenciaDate(e.target.value)}
+                                    />
+                                </div>
+                                <span style={{ color: 'var(--text-secondary)', fontSize: 13, fontWeight: 500 }}>
+                                    Fecha de pase de lista
+                                </span>
+                            </div>
+                            <button
+                                className="btn btn-primary btn-sm"
+                                onClick={handleSaveGlobalAsistencia}
+                                disabled={isSavingAsistencia || asistenciaRecords.length === 0}
+                            >
+                                {isSavingAsistencia ? 'Guardando...' : 'Guardar Asistencia'}
+                            </button>
+                        </div>
+
+                        {sortedRecords.length > 0 ? (
+                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: '12px' }}>
+                                {sortedRecords.map((record) => {
+                                    const idx = asistenciaRecords.findIndex(r => r.personal_id === record.personal_id && r.brigada_id === record.brigada_id);
+                                    const cardBg = record.medio_dia
+                                        ? 'rgba(249, 115, 22, 0.08)'
+                                        : record.asistio ? 'var(--accent-primary-bg)' : 'var(--bg-card)';
+                                    const cardBorder = record.medio_dia
+                                        ? 'var(--accent-orange)'
+                                        : record.asistio ? 'var(--accent-primary)' : 'var(--border-color)';
+                                    return (
+                                        <div
+                                            key={`${record.brigada_id}_${record.personal_id}`}
+                                            onClick={() => {
+                                                const copy = [...asistenciaRecords];
+                                                if (copy[idx].medio_dia) {
+                                                    copy[idx].medio_dia = false;
+                                                    copy[idx].asistio = true;
+                                                } else {
+                                                    copy[idx].asistio = !copy[idx].asistio;
+                                                    copy[idx].medio_dia = false;
+                                                }
+                                                setAsistenciaRecords(copy);
+                                            }}
+                                            style={{
+                                                display: 'flex',
+                                                alignItems: 'center',
+                                                justifyContent: 'space-between',
+                                                padding: '14px 16px',
+                                                backgroundColor: cardBg,
+                                                border: `1px solid ${cardBorder}`,
+                                                borderRadius: 'var(--radius-md)',
+                                                cursor: 'pointer',
+                                                transition: 'all 0.2s ease',
+                                                boxShadow: (record.asistio || record.medio_dia) ? '0 4px 12px rgba(0,0,0,0.05)' : 'none'
+                                            }}
+                                        >
+                                            <div style={{ display: 'flex', flexDirection: 'column', gap: '3px', flex: 1 }}>
+                                                <span style={{
+                                                    fontWeight: 600,
+                                                    color: record.medio_dia ? 'var(--accent-orange)' : (record.asistio ? 'var(--accent-primary)' : 'var(--text-primary)'),
+                                                    transition: 'color 0.2s ease',
+                                                    fontSize: '14px',
+                                                    display: 'flex',
+                                                    alignItems: 'center',
+                                                    gap: 6
+                                                }}>
+                                                    {record.nombre}
+                                                    {record.medio_dia && (
+                                                        <span style={{
+                                                            fontSize: 10, padding: '1px 6px', borderRadius: 100,
+                                                            background: 'rgba(249, 115, 22, 0.15)', color: 'var(--accent-orange)',
+                                                            border: '1px solid rgba(249, 115, 22, 0.3)', fontWeight: 600,
+                                                            whiteSpace: 'nowrap'
+                                                        }}>
+                                                            ½ día
+                                                        </span>
+                                                    )}
+                                                </span>
+                                                <span style={{ fontSize: '11px', color: 'var(--text-secondary)' }}>
+                                                    {record.cargo} · <span style={{ color: 'var(--accent-cyan)' }}>{record.brigada_nombre}</span>
+                                                </span>
+                                            </div>
+                                            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                                <button
+                                                    onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setShowMedioDiaDialog(idx);
+                                                    }}
+                                                    style={{
+                                                        background: 'transparent',
+                                                        border: 'none',
+                                                        cursor: 'pointer',
+                                                        color: record.medio_dia ? 'var(--accent-orange)' : 'var(--text-muted)',
+                                                        padding: 4,
+                                                        borderRadius: '50%',
+                                                        display: 'flex',
+                                                        alignItems: 'center',
+                                                        justifyContent: 'center',
+                                                        transition: 'all 0.2s ease'
+                                                    }}
+                                                    title="Marcar medio día"
+                                                >
+                                                    <HelpCircle size={18} />
+                                                </button>
+                                                <div style={{ cursor: 'pointer' }}>
+                                                    <AnimatedCheckbox
+                                                        checked={record.asistio || record.medio_dia}
+                                                        onChange={() => {}}
+                                                        size={22}
+                                                    />
+                                                </div>
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="empty-state">
+                                <Users size={32} />
+                                <h4>No hay personal asignado a brigadas</h4>
+                                <p>Asigne personal a las brigadas para poder registrar asistencia.</p>
+                            </div>
+                        )}
+
+                        {/* Modal: Medio Día */}
+                        {showMedioDiaDialog !== null && asistenciaRecords[showMedioDiaDialog] && (
+                            <div className="modal-overlay" onClick={() => setShowMedioDiaDialog(null)}>
+                                <div className="modal" onClick={e => e.stopPropagation()} style={{ maxWidth: 400 }}>
+                                    <div className="modal-header">
+                                        <h3>Medio Día</h3>
+                                        <button className="modal-close" onClick={() => setShowMedioDiaDialog(null)}><X size={18} /></button>
+                                    </div>
+                                    <div className="modal-body">
+                                        <p style={{ marginBottom: 20, color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+                                            ¿Desea marcar a <strong style={{ color: 'var(--text-primary)' }}>{asistenciaRecords[showMedioDiaDialog].nombre}</strong> con medio día para esta fecha?
+                                        </p>
+                                        <div className="form-actions">
+                                            <button
+                                                className="btn btn-secondary"
+                                                onClick={() => {
+                                                    // Quitar medio día si ya lo tenía
+                                                    const copy = [...asistenciaRecords];
+                                                    copy[showMedioDiaDialog].medio_dia = false;
+                                                    copy[showMedioDiaDialog].asistio = false;
+                                                    setAsistenciaRecords(copy);
+                                                    setShowMedioDiaDialog(null);
+                                                }}
+                                            >
+                                                No
+                                            </button>
+                                            <button
+                                                className="btn btn-primary"
+                                                style={{ background: 'var(--accent-orange)', borderColor: 'var(--accent-orange)' }}
+                                                onClick={() => {
+                                                    const copy = [...asistenciaRecords];
+                                                    copy[showMedioDiaDialog].medio_dia = true;
+                                                    copy[showMedioDiaDialog].asistio = true;
+                                                    setAsistenciaRecords(copy);
+                                                    setShowMedioDiaDialog(null);
+                                                }}
+                                            >
+                                                Sí, medio día
+                                            </button>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {globalAsistenciaTab === 'reporte' && (
+                    <div>
+                        <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, flexWrap: 'wrap', gap: 16 }}>
+                            <h3>Reporte de Nómina</h3>
+
+                            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+                                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                                    <SearchableSelect
+                                        style={{ minWidth: 200 }}
+                                        value={filterBrigadaId}
+                                        onChange={setFilterBrigadaId}
+                                        placeholder="Todas las Brigadas"
+                                        searchPlaceholder="Buscar brigada..."
+                                        options={[
+                                            { value: 'all', label: 'Todas las Brigadas' },
+                                            ...brigadas.map(b => ({ value: b.id, label: b.nombre }))
+                                        ]}
+                                    />
+                                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Desde:</span>
+                                    <input
+                                        type="date"
+                                        className="search-input"
+                                        style={{ padding: '6px 12px' }}
+                                        value={filterAsistenciaDesde}
+                                        onChange={e => setFilterAsistenciaDesde(e.target.value)}
+                                    />
+                                    <span style={{ fontSize: 13, color: 'var(--text-secondary)', marginLeft: 8 }}>Hasta:</span>
+                                    <input
+                                        type="date"
+                                        className="search-input"
+                                        style={{ padding: '6px 12px' }}
+                                        value={filterAsistenciaHasta}
+                                        onChange={e => setFilterAsistenciaHasta(e.target.value)}
+                                    />
+                                </div>
+
+                                <button className="btn btn-secondary btn-sm" onClick={exportGlobalAsistenciaToPDF} disabled={asistenciaHistory.length === 0}>
+                                    <Download size={16} /> Exportar Nómina (PDF)
+                                </button>
+                            </div>
+                        </div>
+
+                        {asistenciaHistory.length > 0 ? (
+                            <div className="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Personal</th>
+                                            <th>Brigada</th>
+                                            <th>Cargo</th>
+                                            <th style={{ textAlign: 'center' }}>Días Asistidos</th>
+                                            <th style={{ textAlign: 'center' }}>Días de Ausencia</th>
+                                            <th style={{ textAlign: 'center' }}>Asistencia Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {asistenciaHistory.map((h, i) => {
+                                            const isExpanded = expandedRows[i];
+                                            return (
+                                            <tr key={i} onClick={() => setExpandedRows(prev => ({ ...prev, [i]: !prev[i] }))} style={{ cursor: 'pointer' }}>
+                                                <td style={{ fontWeight: 500, color: 'var(--text-primary)', verticalAlign: 'middle' }}>{h.nombre}</td>
+                                                <td style={{ verticalAlign: 'middle' }}>
+                                                    <span style={{
+                                                        fontSize: 12, padding: '3px 10px', borderRadius: 100,
+                                                        background: 'var(--accent-blue-glow)', color: 'var(--accent-cyan)',
+                                                        border: '1px solid var(--border-color)', whiteSpace: 'nowrap'
+                                                    }}>
+                                                        {h.brigada}
+                                                    </span>
+                                                </td>
+                                                <td style={{ verticalAlign: 'middle' }}>{h.cargo}</td>
+                                                <td style={{ verticalAlign: 'middle' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontWeight: 'bold', color: 'var(--accent-green)' }}>
+                                                        {h.asistencias} días
+                                                        {h.mediosDia > 0 && <span style={{ fontSize: 11, color: 'var(--accent-orange)', fontWeight: 500 }}>({h.mediosDia} ½)</span>}
+                                                        <ChevronDown size={14} style={{ transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', opacity: 0.6 }} />
+                                                    </div>
+                                                    {isExpanded && (h.fechasAsistidas.length > 0 || h.fechasMedioDia.length > 0) && (
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 8 }}>
+                                                            {h.fechasAsistidas.map((f, idx) => (
+                                                                <span key={idx} style={{ fontSize: 11, padding: '2px 6px', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--accent-green)', borderRadius: 12, border: '1px solid rgba(34, 197, 94, 0.2)' }}>
+                                                                    {f}
+                                                                </span>
+                                                            ))}
+                                                            {h.fechasMedioDia.map((f, idx) => (
+                                                                <span key={`md-${idx}`} style={{ fontSize: 11, padding: '2px 6px', background: 'rgba(249, 115, 22, 0.1)', color: 'var(--accent-orange)', borderRadius: 12, border: '1px solid rgba(249, 115, 22, 0.3)' }}>
+                                                                    {f} ½
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td style={{ verticalAlign: 'middle' }}>
+                                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, fontWeight: 'bold', color: h.ausencias > 0 ? 'var(--accent-red)' : 'var(--text-secondary)' }}>
+                                                        {h.ausencias} días
+                                                        <ChevronDown size={14} style={{ transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', opacity: 0.6 }} />
+                                                    </div>
+                                                    {isExpanded && h.fechasAusentes.length > 0 && (
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 8 }}>
+                                                            {h.fechasAusentes.map((f, idx) => (
+                                                                <span key={idx} style={{ fontSize: 11, padding: '2px 6px', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--accent-red)', borderRadius: 12, border: '1px solid rgba(239, 68, 68, 0.2)' }}>
+                                                                    {f}
+                                                                </span>
+                                                            ))}
+                                                        </div>
+                                                    )}
+                                                </td>
+                                                <td style={{ textAlign: 'center', color: h.total > 0 ? ((h.asistencias / h.total) >= 0.8 ? 'var(--accent-green)' : ((h.asistencias / h.total) >= 0.5 ? 'var(--accent-orange)' : 'var(--accent-red)')) : 'var(--text-secondary)', fontWeight: 'bold', verticalAlign: 'middle', fontSize: 16 }}>
+                                                    {h.total > 0 ? Math.round((h.asistencias / h.total) * 100) : 0}%
+                                                </td>
+                                            </tr>
+                                            );
+                                        })}
+                                    </tbody>
+                                </table>
+                            </div>
+                        ) : (
+                            <div className="empty-state" style={{ padding: '24px 0' }}>
+                                <History size={24} />
+                                <h4>No hay registros en estas fechas</h4>
+                            </div>
+                        )}
+                    </div>
+                )}
+            </div>
+        );
+    }
+
     // DETAIL VIEW
     if (selectedBrigada) {
+        // Excluir personal ya en esta brigada y ya activo en otra brigada
+        const allAssignedIds = new Set();
+        Object.entries(brigadaMembers).forEach(([brigId, members]) => {
+            if (brigId !== selectedBrigada.id) {
+                members.forEach(m => {
+                    // Find the personal id from name match
+                    const p = personal.find(pp => pp.nombre === m.nombre);
+                    if (p) allAssignedIds.add(p.id);
+                });
+            }
+        });
         const availablePersonal = personal.filter(p =>
-            !brigadaPersonal.find(bp => bp.personal_id === p.id)
+            !brigadaPersonal.find(bp => bp.personal_id === p.id) &&
+            !allAssignedIds.has(p.id)
         );
 
         return (
@@ -451,9 +878,6 @@ export default function Brigadas() {
                     <button className={`tab ${activeTab === 'historial' ? 'active' : ''}`} onClick={() => setActiveTab('historial')}>
                         Historial de Movimientos
                     </button>
-                    <button className={`tab ${activeTab === 'asistencia' ? 'active' : ''}`} onClick={() => setActiveTab('asistencia')}>
-                        Asistencia
-                    </button>
                 </div>
 
                 {activeTab === 'miembros' && (
@@ -492,11 +916,13 @@ export default function Brigadas() {
                                                             </button>
                                                         )}
                                                         <button className="btn btn-secondary btn-sm" style={{ padding: '4px 8px' }} onClick={() => {
+                                                            const p = personal.find(pp => pp.id === bp.personal_id);
                                                             setEditPersForm({
                                                                 nombre: bp.personal?.nombre || '',
                                                                 cedula: bp.personal?.cedula || '',
                                                                 cargo: bp.personal?.cargo || '',
-                                                                telefono: bp.personal?.telefono || ''
+                                                                telefono: bp.personal?.telefono || '',
+                                                                activo: p?.activo !== false
                                                             });
                                                             setShowEditPersonal(bp.personal_id);
                                                         }} title="Editar">
@@ -517,173 +943,6 @@ export default function Brigadas() {
                                 <Users size={40} />
                                 <h4>Sin miembros asignados</h4>
                                 <p>Asigna personal técnico a esta brigada.</p>
-                            </div>
-                        )}
-                    </div>
-                )}
-
-                {activeTab === 'asistencia' && (
-                    <div>
-                        <div className="filter-bar" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
-                            <div style={{ display: 'flex', gap: 16, alignItems: 'center' }}>
-                                <div className="search-box" style={{ width: 'auto' }}>
-                                    <Calendar className="search-icon" size={18} />
-                                    <input
-                                        type="date"
-                                        className="search-input"
-                                        value={asistenciaDate}
-                                        onChange={e => setAsistenciaDate(e.target.value)}
-                                    />
-                                </div>
-                                <span style={{ color: 'var(--text-secondary)', fontSize: 13, fontWeight: 500 }}>
-                                    Seleccionar fecha de pase de lista
-                                </span>
-                            </div>
-                            <button
-                                className="btn btn-primary btn-sm"
-                                onClick={handleSaveAsistencia}
-                                disabled={isSavingAsistencia || asistenciaRecords.length === 0}
-                            >
-                                {isSavingAsistencia ? 'Guardando...' : 'Guardar Asistencia'}
-                            </button>
-                        </div>
-
-                        {asistenciaRecords.length > 0 ? (
-                            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '16px', marginBottom: '32px' }}>
-                                {asistenciaRecords.map((record, i) => (
-                                    <div
-                                        key={record.personal_id}
-                                        onClick={() => {
-                                            const copy = [...asistenciaRecords];
-                                            copy[i].asistio = !copy[i].asistio;
-                                            setAsistenciaRecords(copy);
-                                        }}
-                                        style={{
-                                            display: 'flex',
-                                            alignItems: 'center',
-                                            justifyContent: 'space-between',
-                                            padding: '16px',
-                                            backgroundColor: record.asistio ? 'var(--accent-primary-bg)' : 'var(--bg-card)',
-                                            border: `1px solid ${record.asistio ? 'var(--accent-primary)' : 'var(--border-color)'}`,
-                                            borderRadius: 'var(--radius-md)',
-                                            cursor: 'pointer',
-                                            transition: 'all 0.2s ease',
-                                            boxShadow: record.asistio ? '0 4px 12px rgba(0,0,0,0.05)' : 'none'
-                                        }}
-                                    >
-                                        <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-                                            <span style={{ 
-                                                fontWeight: 600, 
-                                                color: record.asistio ? 'var(--accent-primary)' : 'var(--text-primary)',
-                                                transition: 'color 0.2s ease',
-                                                fontSize: '14px'
-                                            }}>
-                                                {record.nombre}
-                                            </span>
-                                            <span style={{ fontSize: '12px', color: 'var(--text-secondary)' }}>
-                                                {record.cargo || '—'}
-                                            </span>
-                                        </div>
-                                        <div style={{ pointerEvents: 'none' }}>
-                                            <AnimatedCheckbox
-                                                checked={record.asistio}
-                                                onChange={() => {}}
-                                                size={22}
-                                            />
-                                        </div>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="empty-state">
-                                <Users size={32} />
-                                <h4>No hay personal en la brigada</h4>
-                                <p>Asigne personal para poder registrar asistencia.</p>
-                            </div>
-                        )}
-
-                        <div className="section-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16, marginTop: 40, flexWrap: 'wrap', gap: 16 }}>
-                            <h3>Reporte de Nómina</h3>
-
-                            <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
-                                <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                                    <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Desde:</span>
-                                    <input
-                                        type="date"
-                                        className="search-input"
-                                        style={{ padding: '6px 12px' }}
-                                        value={filterAsistenciaDesde}
-                                        onChange={e => setFilterAsistenciaDesde(e.target.value)}
-                                    />
-                                    <span style={{ fontSize: 13, color: 'var(--text-secondary)', marginLeft: 8 }}>Hasta:</span>
-                                    <input
-                                        type="date"
-                                        className="search-input"
-                                        style={{ padding: '6px 12px' }}
-                                        value={filterAsistenciaHasta}
-                                        onChange={e => setFilterAsistenciaHasta(e.target.value)}
-                                    />
-                                </div>
-
-                                <button className="btn btn-secondary btn-sm" onClick={exportAsistenciaToPDF} disabled={asistenciaHistory.length === 0}>
-                                    <Download size={16} /> Exportar Nómina (PDF)
-                                </button>
-                            </div>
-                        </div>
-
-                        {asistenciaHistory.length > 0 ? (
-                            <div className="table-container">
-                                <table>
-                                    <thead>
-                                        <tr>
-                                            <th>Personal</th>
-                                            <th>Cargo</th>
-                                            <th style={{ textAlign: 'center' }}>Días Asistidos</th>
-                                            <th style={{ textAlign: 'center' }}>Días de Ausencia</th>
-                                            <th style={{ textAlign: 'center' }}>Asistencia Total</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody>
-                                        {asistenciaHistory.map((h, i) => (
-                                            <tr key={i}>
-                                                <td style={{ fontWeight: 500, color: 'var(--text-primary)', verticalAlign: 'top' }}>{h.nombre}</td>
-                                                <td style={{ verticalAlign: 'top' }}>{h.cargo}</td>
-                                                <td style={{ verticalAlign: 'top' }}>
-                                                    <div style={{ textAlign: 'center', fontWeight: 'bold', color: 'var(--accent-green)', marginBottom: 6 }}>
-                                                        {h.asistencias} días
-                                                    </div>
-                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
-                                                        {h.fechasAsistidas.map((f, idx) => (
-                                                            <span key={idx} style={{ fontSize: 11, padding: '2px 6px', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--accent-green)', borderRadius: 12, border: '1px solid rgba(34, 197, 94, 0.2)' }}>
-                                                                {f}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                </td>
-                                                <td style={{ verticalAlign: 'top' }}>
-                                                    <div style={{ textAlign: 'center', fontWeight: 'bold', color: h.ausencias > 0 ? 'var(--accent-red)' : 'var(--text-secondary)', marginBottom: 6 }}>
-                                                        {h.ausencias} días
-                                                    </div>
-                                                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center' }}>
-                                                        {h.fechasAusentes.map((f, idx) => (
-                                                            <span key={idx} style={{ fontSize: 11, padding: '2px 6px', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--accent-red)', borderRadius: 12, border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-                                                                {f}
-                                                            </span>
-                                                        ))}
-                                                    </div>
-                                                </td>
-                                                <td style={{ textAlign: 'center', color: (h.asistencias / h.total) >= 0.8 ? 'var(--accent-green)' : ((h.asistencias / h.total) >= 0.5 ? 'var(--accent-orange)' : 'var(--accent-red)'), fontWeight: 'bold', verticalAlign: 'middle', fontSize: 16 }}>
-                                                    {Math.round((h.asistencias / h.total) * 100)}%
-                                                </td>
-                                            </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
-                            </div>
-                        ) : (
-                            <div className="empty-state" style={{ padding: '24px 0' }}>
-                                <History size={24} />
-                                <h4>No hay registros en estas fechas</h4>
                             </div>
                         )}
                     </div>
@@ -733,7 +992,10 @@ export default function Brigadas() {
                 )}
 
                 {/* Modal: Asignar Personal */}
-                {showAsignarPersonal && (
+                {showAsignarPersonal && (() => {
+                    const selectedPers = personal.find(p => p.id === asignarPersonalId);
+                    const isDisabled = selectedPers && selectedPers.activo === false;
+                    return (
                     <div className="modal-overlay" onClick={() => setShowAsignarPersonal(false)}>
                         <div className="modal" onClick={e => e.stopPropagation()}>
                             <div className="modal-header">
@@ -744,16 +1006,30 @@ export default function Brigadas() {
                                 <form onSubmit={handleAsignarPersonal}>
                                     <div className="form-group">
                                         <label>Seleccionar Personal</label>
-                                        <select className="form-select" required value={asignarPersonalId}
-                                            onChange={e => setAsignarPersonalId(e.target.value)}>
-                                            <option value="">Seleccionar...</option>
-                                            {availablePersonal.map(p => (
-                                                <option key={p.id} value={p.id}>
-                                                    {p.nombre} {p.cedula ? `(${p.cedula})` : ''} {p.cargo ? `— ${p.cargo}` : ''}
-                                                </option>
-                                            ))}
-                                        </select>
+                                        <SearchableSelect
+                                            required
+                                            value={asignarPersonalId}
+                                            onChange={setAsignarPersonalId}
+                                            placeholder="Buscar personal..."
+                                            searchPlaceholder="Buscar por nombre o cédula..."
+                                            options={availablePersonal.map(p => ({
+                                                value: p.id,
+                                                label: `${p.nombre}${p.cedula ? ` (${p.cedula})` : ''}${p.cargo ? ` — ${p.cargo}` : ''}`,
+                                                sublabel: p.activo === false ? '⚠ Personal deshabilitado — se rehabilitará al asignar' : undefined
+                                            }))}
+                                        />
                                     </div>
+                                    {isDisabled && (
+                                        <div style={{
+                                            padding: '10px 14px', borderRadius: 'var(--radius-md)',
+                                            background: 'rgba(249, 115, 22, 0.08)', border: '1px solid rgba(249, 115, 22, 0.3)',
+                                            marginBottom: 16
+                                        }}>
+                                            <p style={{ fontSize: 12, color: 'var(--accent-orange)', lineHeight: 1.5 }}>
+                                                ⚠ <strong>{selectedPers.nombre}</strong> está deshabilitado. Al asignarlo a esta brigada se volverá a habilitar automáticamente.
+                                            </p>
+                                        </div>
+                                    )}
                                     {availablePersonal.length === 0 && (
                                         <p style={{ color: 'var(--text-muted)', fontSize: 13, marginBottom: 16 }}>
                                             Todo el personal ya está asignado. Registre nuevo personal primero.
@@ -761,13 +1037,16 @@ export default function Brigadas() {
                                     )}
                                     <div className="form-actions">
                                         <button type="button" className="btn btn-secondary" onClick={() => setShowAsignarPersonal(false)}>Cancelar</button>
-                                        <button type="submit" className="btn btn-primary" disabled={availablePersonal.length === 0}>Asignar</button>
+                                        <button type="submit" className="btn btn-primary" disabled={availablePersonal.length === 0}>
+                                            {isDisabled ? 'Rehabilitar y Asignar' : 'Asignar'}
+                                        </button>
                                     </div>
                                 </form>
                             </div>
                         </div>
                     </div>
-                )}
+                    );
+                })()}
 
                 {/* Modal: Remover Personal */}
                 {showRemovePersonal && (
@@ -827,6 +1106,41 @@ export default function Brigadas() {
                                         <input className="form-input" value={editPersForm.telefono}
                                             onChange={e => setEditPersForm({ ...editPersForm, telefono: e.target.value })} />
                                     </div>
+
+                                    <div style={{
+                                        padding: '12px 16px',
+                                        borderRadius: 'var(--radius-md)',
+                                        border: `1px solid ${editPersForm.activo === false ? 'rgba(239, 68, 68, 0.3)' : 'var(--border-color)'}`,
+                                        background: editPersForm.activo === false ? 'rgba(239, 68, 68, 0.05)' : 'transparent',
+                                        marginBottom: 16
+                                    }}>
+                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                            <div>
+                                                <label style={{ fontWeight: 600, fontSize: 13, color: editPersForm.activo === false ? 'var(--accent-red)' : 'var(--text-primary)', marginBottom: 2, display: 'block' }}>
+                                                    Estado del personal
+                                                </label>
+                                                <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                                    {editPersForm.activo === false
+                                                        ? 'Deshabilitado — no aparecerá en asistencia ni brigadas'
+                                                        : 'Habilitado — activo en el sistema'}
+                                                </span>
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={() => setEditPersForm({ ...editPersForm, activo: editPersForm.activo === false ? true : false })}
+                                                className={`btn btn-sm ${editPersForm.activo === false ? 'btn-danger' : 'btn-secondary'}`}
+                                                style={{ fontSize: 12, whiteSpace: 'nowrap' }}
+                                            >
+                                                {editPersForm.activo === false ? 'Deshabilitado' : 'Habilitado'}
+                                            </button>
+                                        </div>
+                                        {editPersForm.activo === false && (
+                                            <p style={{ fontSize: 11, color: 'var(--accent-red)', marginTop: 8, lineHeight: 1.4 }}>
+                                                ⚠ Al guardar, esta persona será removida de su brigada actual y no aparecerá en asistencia ni nómina.
+                                            </p>
+                                        )}
+                                    </div>
+
                                     <div className="form-actions">
                                         <button type="button" className="btn btn-secondary" onClick={() => setShowEditPersonal(null)}>Cancelar</button>
                                         <button type="submit" className="btn btn-primary">Guardar Cambios</button>
@@ -898,13 +1212,39 @@ export default function Brigadas() {
                     <h2>Brigadas</h2>
                     <p className="page-header-subtitle">Gestión de brigadas y personal técnico</p>
                 </div>
-                <div className="btn-group">
-                    <button className="btn btn-secondary" onClick={() => setShowCreatePersonal(true)}>
-                        <UserPlus size={16} /> Registrar Personal
-                    </button>
+                <div className="btn-group" style={{ position: 'relative' }}>
                     <button className="btn btn-primary" onClick={() => setShowCreateBrigada(true)}>
                         <Plus size={16} /> Nueva Brigada
                     </button>
+                    <button
+                        className="btn btn-secondary btn-sm"
+                        style={{ padding: '6px 8px' }}
+                        onClick={() => setShowListActionsDropdown(!showListActionsDropdown)}
+                    >
+                        <MoreVertical size={16} />
+                    </button>
+
+                    {showListActionsDropdown && (
+                        <>
+                            <div className="animated-dropdown-backdrop" onClick={() => setShowListActionsDropdown(false)} />
+                            <div className="animated-dropdown">
+                                <div className="animated-dropdown-label">Acciones</div>
+                                <div className="animated-dropdown-separator" />
+                                <button
+                                    className="animated-dropdown-item"
+                                    onClick={() => { setShowListActionsDropdown(false); setShowCreatePersonal(true); }}
+                                >
+                                    <UserPlus size={14} /> Registrar Personal
+                                </button>
+                                <button
+                                    className="animated-dropdown-item"
+                                    onClick={() => { setShowListActionsDropdown(false); setShowGlobalAsistencia(true); }}
+                                >
+                                    <ClipboardCheck size={14} /> Pasar Asistencia
+                                </button>
+                            </div>
+                        </>
+                    )}
                 </div>
             </div>
 

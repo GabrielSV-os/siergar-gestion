@@ -4,8 +4,9 @@ import { useRealtime } from '../lib/useRealtime';
 import { useToast } from '../components/Toast';
 import {
     FolderKanban, Plus, X, ArrowLeft, Search, MapPin, Calendar,
-    Users, Package, TrendingDown, Clock, Filter, ExternalLink, Pause, Play, FileText, Download, Edit2, Trash2, MoreVertical, Shield, AlertTriangle
+    Users, Package, TrendingDown, Clock, Filter, ExternalLink, Pause, Play, FileText, Download, Edit2, Trash2, MoreVertical, Shield, AlertTriangle, ChevronDown
 } from 'lucide-react';
+import SearchableSelect from '../components/SearchableSelect';
 import CountUp from '../components/CountUp';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -109,6 +110,15 @@ export default function Proyectos() {
     const [devolucionRows, setDevolucionRows] = useState([{ material_id: '', cantidad: '', observaciones: '' }]);
     const [showAddGasto, setShowAddGasto] = useState(false);
     const [gastoForm, setGastoForm] = useState({ fecha: new Date().toISOString().split('T')[0], categoria: 'combustible', monto: '', titulo: '', comentario: '' });
+    const [expandedTotalRows, setExpandedTotalRows] = useState({});
+
+    // Search states for material tables
+    const [searchAlmacen, setSearchAlmacen] = useState('');
+    const [searchInventarioBrigadas, setSearchInventarioBrigadas] = useState('');
+    const [searchEstimado, setSearchEstimado] = useState('');
+    const [searchCotizacion, setSearchCotizacion] = useState('');
+    const [collapsedSections, setCollapsedSections] = useState({});
+    const toggleSection = (key) => setCollapsedSections(prev => ({ ...prev, [key]: !prev[key] }));
 
     useEffect(() => { loadData(); }, []);
 
@@ -1564,13 +1574,13 @@ export default function Proyectos() {
                                             </div>
                                         )}
 
-                                        {/* Material usage table */}
+                                        {/* Material usage table — top 5 most used */}
                                         {matList.length > 0 && (
                                             <div className="table-container">
                                                 <table>
                                                     <thead>
                                                         <tr>
-                                                            <th>Material</th>
+                                                            <th>Top 5 Materiales más usados</th>
                                                             <th style={{ textAlign: 'center' }}>Asignado</th>
                                                             <th style={{ textAlign: 'center' }}>Consumido</th>
                                                             <th style={{ textAlign: 'center' }}>Disponible</th>
@@ -1578,7 +1588,7 @@ export default function Proyectos() {
                                                         </tr>
                                                     </thead>
                                                     <tbody>
-                                                        {matList.map((m, idx) => {
+                                                        {[...matList].sort((a, b) => b.consumido - a.consumido).slice(0, 5).map((m, idx) => {
                                                             const disponible = m.asignado - m.consumido;
                                                             const pct = m.asignado > 0 ? Math.round((m.consumido / m.asignado) * 100) : 0;
                                                             return (
@@ -1836,13 +1846,18 @@ export default function Proyectos() {
 
                 {activeTab === 'consumos' && (
                     <div>
-                        <div className="filter-bar" style={{ justifyContent: 'space-between' }}>
-                            <select className="form-select" value={filterBrigada} onChange={e => setFilterBrigada(e.target.value)}>
-                                <option value="">Todas las brigadas</option>
-                                {proyectoBrigadas.map(pb => (
-                                    <option key={pb.brigada_id} value={pb.brigada_id}>{pb.brigadas?.nombre}</option>
-                                ))}
-                            </select>
+                        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>Inventario de Brigadas</h2>
+                        {/* Search + button on same row */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
+                            <div className="search-bar" style={{ flex: 1, marginBottom: 0 }}>
+                                <Search size={16} />
+                                <input
+                                    type="text"
+                                    placeholder="Buscar material..."
+                                    value={searchInventarioBrigadas}
+                                    onChange={e => setSearchInventarioBrigadas(e.target.value)}
+                                />
+                            </div>
                             {selectedProyecto.estado === 'activo' && (() => {
                                 const hasWarehouseStock = proyectoInventario.some(pi => pi.cantidad > 0);
                                 return (
@@ -1851,7 +1866,7 @@ export default function Proyectos() {
                                         onClick={() => setShowAddConsumo(true)}
                                         disabled={!hasWarehouseStock}
                                         title={!hasWarehouseStock ? "Primero agregue materiales en Almacén" : ""}
-                                        style={{ opacity: !hasWarehouseStock ? 0.6 : 1, cursor: !hasWarehouseStock ? 'not-allowed' : 'pointer' }}
+                                        style={{ opacity: !hasWarehouseStock ? 0.6 : 1, cursor: !hasWarehouseStock ? 'not-allowed' : 'pointer', flexShrink: 0 }}
                                     >
                                         <Plus size={14} /> Asignar Material
                                     </button>
@@ -1859,7 +1874,7 @@ export default function Proyectos() {
                             })()}
                         </div>
                         {(() => {
-                            const inv = calcBrigadeInventory();
+                            const inv = calcBrigadeInventory().filter(item => item.material?.toLowerCase().includes(searchInventarioBrigadas.toLowerCase()));
                             if (inv.length === 0) return (
                                 <div className="table-container">
                                     <table><tbody>
@@ -1878,53 +1893,78 @@ export default function Proyectos() {
                                 acc[item.brigada_id].items.push(item);
                                 return acc;
                             }, {});
-                            return Object.entries(groups).map(([brigId, group]) => (
-                                <div key={brigId} style={{ marginBottom: 24 }}>
-                                    <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8 }}>
-                                        <Users size={15} style={{ color: 'var(--accent-green)' }} />
-                                        <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{group.nombre}</span>
+                            return Object.entries(groups).map(([brigId, group]) => {
+                                const sectionKey = `brigInv_${brigId}`;
+                                return (
+                                    <div key={brigId} style={{ marginBottom: 24 }}>
+                                        <div
+                                            onClick={() => toggleSection(sectionKey)}
+                                            style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 8, cursor: 'pointer', userSelect: 'none' }}
+                                        >
+                                            <ChevronDown size={15} style={{ color: 'var(--accent-green)', transition: 'transform 0.25s ease', transform: collapsedSections[sectionKey] ? 'rotate(-90deg)' : 'rotate(0deg)', flexShrink: 0 }} />
+                                            <Users size={15} style={{ color: 'var(--accent-green)' }} />
+                                            <span style={{ fontWeight: 600, fontSize: 14, color: 'var(--text-primary)' }}>{group.nombre}</span>
+                                        </div>
+                                        {!collapsedSections[sectionKey] && (
+                                            <div className="table-container" style={{ marginBottom: 0 }}>
+                                                <table>
+                                                    <thead>
+                                                        <tr>
+                                                            <th>Material</th>
+                                                            <th style={{ textAlign: 'center' }}>Asignado</th>
+                                                            <th style={{ textAlign: 'center' }}>Consumido</th>
+                                                            <th style={{ textAlign: 'center' }}>Disponible</th>
+                                                        </tr>
+                                                    </thead>
+                                                    <tbody>
+                                                        {group.items.map((item, i) => (
+                                                            <tr key={i}>
+                                                                <td style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{item.material}</td>
+                                                                <td style={{ fontWeight: 600, color: 'var(--accent-blue)', textAlign: 'center' }}>{item.asignado}</td>
+                                                                <td style={{ fontWeight: 600, color: 'var(--accent-orange)', textAlign: 'center' }}>{item.consumido}</td>
+                                                                <td style={{ fontWeight: 600, color: (item.asignado - item.consumido) > 0 ? 'var(--accent-green)' : 'var(--accent-red)', textAlign: 'center' }}>
+                                                                    {item.asignado - item.consumido}
+                                                                </td>
+                                                            </tr>
+                                                        ))}
+                                                    </tbody>
+                                                </table>
+                                            </div>
+                                        )}
                                     </div>
-                                    <div className="table-container" style={{ marginBottom: 0 }}>
-                                        <table>
-                                            <thead>
-                                                <tr>
-                                                    <th>Material</th>
-                                                    <th style={{ textAlign: 'center' }}>Asignado</th>
-                                                    <th style={{ textAlign: 'center' }}>Consumido</th>
-                                                    <th style={{ textAlign: 'center' }}>Disponible</th>
-                                                </tr>
-                                            </thead>
-                                            <tbody>
-                                                {group.items.map((item, i) => (
-                                                    <tr key={i}>
-                                                        <td style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{item.material}</td>
-                                                        <td style={{ fontWeight: 600, color: 'var(--accent-blue)', textAlign: 'center' }}>{item.asignado}</td>
-                                                        <td style={{ fontWeight: 600, color: 'var(--accent-orange)', textAlign: 'center' }}>{item.consumido}</td>
-                                                        <td style={{ fontWeight: 600, color: (item.asignado - item.consumido) > 0 ? 'var(--accent-green)' : 'var(--accent-red)', textAlign: 'center' }}>
-                                                            {item.asignado - item.consumido}
-                                                        </td>
-                                                    </tr>
-                                                ))}
-                                            </tbody>
-                                        </table>
-                                    </div>
-                                </div>
-                            ));
+                                );
+                            });
                         })()}
                     </div>
                 )}
 
                 {activeTab === 'estimado' && (
                     <div>
-                        <div className="filter-bar" style={{ justifyContent: 'space-between' }}>
-                            <select className="form-select" value={filterBrigada} onChange={e => setFilterBrigada(e.target.value)}>
-                                <option value="">Todas las brigadas</option>
-                                {proyectoBrigadas.map(pb => (
-                                    <option key={pb.brigada_id} value={pb.brigada_id}>{pb.brigadas?.nombre}</option>
-                                ))}
-                            </select>
+                        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>Consumo de Materiales</h2>
+                        {/* Filter + search + button all on one row */}
+                        <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
+                            <div style={{ width: 200, flexShrink: 0 }}>
+                                <SearchableSelect
+                                    value={filterBrigada}
+                                    onChange={val => setFilterBrigada(val)}
+                                    placeholder="Todas las brigadas"
+                                    searchPlaceholder="Buscar brigada..."
+                                    options={[
+                                        { value: '', label: 'Todas las brigadas' },
+                                        ...proyectoBrigadas.map(pb => ({ value: pb.brigada_id, label: pb.brigadas?.nombre || '' }))
+                                    ]}
+                                />
+                            </div>
+                            <div className="search-bar" style={{ flex: 1, marginBottom: 0 }}>
+                                <Search size={16} />
+                                <input
+                                    type="text"
+                                    placeholder="Buscar material..."
+                                    value={searchEstimado}
+                                    onChange={e => setSearchEstimado(e.target.value)}
+                                />
+                            </div>
                             {selectedProyecto.estado === 'activo' && (() => {
-                                // Validate if there are any materials effectively assigned to some brigade
                                 const hasAssignedMaterials = calcBrigadeInventory().some(item => (item.asignado - item.consumido) > 0);
                                 return (
                                     <button
@@ -1932,61 +1972,22 @@ export default function Proyectos() {
                                         onClick={() => setShowAddConsumoDiario(true)}
                                         disabled={!hasAssignedMaterials}
                                         title={!hasAssignedMaterials ? "Primero asigne materiales en Inventario de Brigadas" : ""}
-                                        style={{ opacity: !hasAssignedMaterials ? 0.6 : 1, cursor: !hasAssignedMaterials ? 'not-allowed' : 'pointer' }}
+                                        style={{ opacity: !hasAssignedMaterials ? 0.6 : 1, cursor: !hasAssignedMaterials ? 'not-allowed' : 'pointer', flexShrink: 0 }}
                                     >
                                         <Plus size={14} /> Registrar Consumo Diario
                                     </button>
                                 );
                             })()}
                         </div>
-                        <div className="table-container">
-                            <table>
-                                <thead>
-                                    <tr>
-                                        <th>Material</th>
-                                        <th style={{ textAlign: 'center' }}>Fechas Implicadas</th>
-                                        <th style={{ textAlign: 'center' }}>Total Consumido</th>
-                                        <th style={{ textAlign: 'center' }}>Días Trabajados</th>
-                                        <th style={{ textAlign: 'center' }}>Horas Totales</th>
-                                        <th style={{ textAlign: 'center' }}>Estimado / Hora</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    {estimates.length > 0 ? estimates.map((e, i) => (
-                                        <tr key={e.id || i}>
-                                            <td style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{e.name}</td>
-                                            <td style={{ color: 'var(--text-secondary)', fontSize: 13, textAlign: 'center' }}>{
-                                                e.date
-                                                    ? e.date.split('-').reverse().join('/')
-                                                    : '—'
-                                            }</td>
-                                            <td style={{ fontWeight: 600, textAlign: 'center' }}>{e.total}</td>
-                                            <td style={{ textAlign: 'center' }}>1</td>
-                                            <td style={{ textAlign: 'center' }}>{e.hours > 0 ? e.hours : '—'}</td>
-                                            <td style={{ textAlign: 'center' }}>
-                                                {e.perHour !== '—' ?
-                                                    <span className="badge badge-orange"><Clock size={12} style={{ marginRight: 4 }} /> {e.perHour} / hora</span> :
-                                                    <span style={{ color: 'var(--text-muted)' }}>Sin datos</span>
-                                                }
-                                            </td>
-                                        </tr>
-                                    )) : (
-                                        <tr><td colSpan="5">
-                                            <div className="empty-state">
-                                                <Clock size={32} />
-                                                <h4>Sin datos para calcular</h4>
-                                                <p>Registre consumos diarios para obtener estimados basados en horas reales.</p>
-                                            </div>
-                                        </td></tr>
-                                    )}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        {/* Recopilación de Consumos Totales del Proyecto */}
-                        <div style={{ marginTop: 24, marginBottom: 16 }}>
-                            <h3 style={{ fontSize: 16, marginBottom: 12, color: 'var(--text-primary)' }}>Total General del Proyecto</h3>
-                            <div className="table-container">
+                        <div style={{ marginBottom: 24 }}>
+                            <div
+                                onClick={() => toggleSection('totalGeneral')}
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 12, userSelect: 'none' }}
+                            >
+                                <ChevronDown size={15} style={{ color: 'var(--text-muted)', transition: 'transform 0.25s ease', transform: collapsedSections['totalGeneral'] ? 'rotate(-90deg)' : 'rotate(0deg)', flexShrink: 0 }} />
+                                <h3 style={{ fontSize: 16, margin: 0, color: 'var(--text-primary)' }}>Total General del Proyecto</h3>
+                            </div>
+                            {!collapsedSections['totalGeneral'] && <div className="table-container">
                                 <table>
                                     <thead>
                                         <tr>
@@ -2022,16 +2023,50 @@ export default function Proyectos() {
                                                     days: e.dates.size,
                                                     perHour
                                                 };
-                                            }).filter(e => e.total > 0);
+                                            }).filter(e => e.total > 0).filter(e => e.name?.toLowerCase().includes(searchEstimado.toLowerCase()));
 
                                             return globalEstimates.length > 0 ? globalEstimates.map((e, i) => (
-                                                <tr key={i}>
+                                                <tr key={i} onClick={() => setExpandedTotalRows(prev => ({ ...prev, [i]: !prev[i] }))} style={{ cursor: 'pointer' }}>
                                                     <td style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{e.name}</td>
-                                                    <td style={{ color: 'var(--text-secondary)', fontSize: 13, textAlign: 'center' }}>{
-                                                        e.dates && e.dates.size > 0
-                                                            ? Array.from(e.dates).map(d => d.split('-').reverse().join('/')).join(', ')
-                                                            : '—'
-                                                    }</td>
+                                                    <td style={{ color: 'var(--text-secondary)', fontSize: 13, textAlign: 'center' }}>
+                                                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}>
+                                                            <ChevronDown
+                                                                size={14}
+                                                                style={{
+                                                                    color: 'var(--text-muted)',
+                                                                    transition: 'transform 0.3s ease',
+                                                                    transform: expandedTotalRows[i] ? 'rotate(180deg)' : 'rotate(0deg)',
+                                                                    flexShrink: 0
+                                                                }}
+                                                            />
+                                                            <span style={{ color: 'var(--accent-cyan)', fontWeight: 500 }}>
+                                                                {e.dates.size} {e.dates.size === 1 ? 'fecha' : 'fechas'}
+                                                            </span>
+                                                        </div>
+                                                        {expandedTotalRows[i] && (
+                                                            <div style={{
+                                                                marginTop: 8,
+                                                                display: 'flex',
+                                                                flexWrap: 'wrap',
+                                                                gap: 4,
+                                                                justifyContent: 'center',
+                                                                animation: 'fadeIn 0.3s ease'
+                                                            }}>
+                                                                {Array.from(e.dates).sort().reverse().map((d, di) => (
+                                                                    <span key={di} style={{
+                                                                        fontSize: 11,
+                                                                        padding: '2px 8px',
+                                                                        borderRadius: 'var(--radius-sm)',
+                                                                        background: 'rgba(255,255,255,0.06)',
+                                                                        color: 'var(--text-secondary)',
+                                                                        border: '1px solid var(--border-color)'
+                                                                    }}>
+                                                                        {d.split('-').reverse().join('/')}
+                                                                    </span>
+                                                                ))}
+                                                            </div>
+                                                        )}
+                                                    </td>
                                                     <td style={{ fontWeight: 600, textAlign: 'center' }}>{e.total}</td>
                                                     <td style={{ textAlign: 'center' }}>{e.days}</td>
                                                     <td style={{ textAlign: 'center' }}>{e.hours > 0 ? e.hours : '—'}</td>
@@ -2044,7 +2079,7 @@ export default function Proyectos() {
                                                 </tr>
                                             )) : (
                                                 <tr>
-                                                    <td colSpan="5">
+                                                    <td colSpan="6">
                                                         <div className="empty-state" style={{ padding: '24px 0' }}>
                                                             <p style={{ color: 'var(--text-muted)' }}>No hay consumos registrados en este proyecto.</p>
                                                         </div>
@@ -2054,13 +2089,68 @@ export default function Proyectos() {
                                         })()}
                                     </tbody>
                                 </table>
+                            </div>}
+                        </div>
+
+                        {/* Detalle por brigada */}
+                        <div style={{ marginTop: 24 }}>
+                            <div
+                                onClick={() => toggleSection('detalleBrigada')}
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 12, userSelect: 'none' }}
+                            >
+                                <ChevronDown size={15} style={{ color: 'var(--text-muted)', transition: 'transform 0.25s ease', transform: collapsedSections['detalleBrigada'] ? 'rotate(-90deg)' : 'rotate(0deg)', flexShrink: 0 }} />
+                                <h3 style={{ fontSize: 16, margin: 0, color: 'var(--text-primary)' }}>Detalle por Brigada</h3>
                             </div>
+                            {!collapsedSections['detalleBrigada'] && <div className="table-container">
+                                <table>
+                                    <thead>
+                                        <tr>
+                                            <th>Material</th>
+                                            <th style={{ textAlign: 'center' }}>Fechas Implicadas</th>
+                                            <th style={{ textAlign: 'center' }}>Total Consumido</th>
+                                            <th style={{ textAlign: 'center' }}>Días Trabajados</th>
+                                            <th style={{ textAlign: 'center' }}>Horas Totales</th>
+                                            <th style={{ textAlign: 'center' }}>Estimado / Hora</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {estimates.filter(e => e.name?.toLowerCase().includes(searchEstimado.toLowerCase())).length > 0 ? estimates.filter(e => e.name?.toLowerCase().includes(searchEstimado.toLowerCase())).map((e, i) => (
+                                            <tr key={e.id || i}>
+                                                <td style={{ fontWeight: 500, color: 'var(--text-primary)' }}>{e.name}</td>
+                                                <td style={{ color: 'var(--text-secondary)', fontSize: 13, textAlign: 'center' }}>{
+                                                    e.date
+                                                        ? e.date.split('-').reverse().join('/')
+                                                        : '—'
+                                                }</td>
+                                                <td style={{ fontWeight: 600, textAlign: 'center' }}>{e.total}</td>
+                                                <td style={{ textAlign: 'center' }}>1</td>
+                                                <td style={{ textAlign: 'center' }}>{e.hours > 0 ? e.hours : '—'}</td>
+                                                <td style={{ textAlign: 'center' }}>
+                                                    {e.perHour !== '—' ?
+                                                        <span className="badge badge-orange"><Clock size={12} style={{ marginRight: 4 }} /> {e.perHour} / hora</span> :
+                                                        <span style={{ color: 'var(--text-muted)' }}>Sin datos</span>
+                                                    }
+                                                </td>
+                                            </tr>
+                                        )) : (
+                                            <tr><td colSpan="6">
+                                                <div className="empty-state">
+                                                    <Clock size={32} />
+                                                    <h4>Sin datos para calcular</h4>
+                                                    <p>Registre consumos diarios para obtener estimados basados en horas reales.</p>
+                                                </div>
+                                            </td></tr>
+                                        )}
+                                    </tbody>
+                                </table>
+                            </div>}
                         </div>
                     </div>
                 )}
 
                 {activeTab === 'cotizacion' && (
                     <div>
+                        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>Cotización</h2>
                         <div className="card" style={{ marginBottom: 20 }}>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
                                 <div>
@@ -2106,6 +2196,16 @@ export default function Proyectos() {
                                 </div>
                             </div>
 
+                            <div className="search-bar" style={{ marginBottom: 12 }}>
+                                <Search size={16} />
+                                <input
+                                    type="text"
+                                    placeholder="Buscar material..."
+                                    value={searchCotizacion}
+                                    onChange={e => setSearchCotizacion(e.target.value)}
+                                />
+                            </div>
+
                             <div className="table-container">
                                 <table>
                                     <thead>
@@ -2121,7 +2221,7 @@ export default function Proyectos() {
                                         </tr>
                                     </thead>
                                     <tbody>
-                                        {cotizacionItems.length > 0 ? cotizacionItems.map((item, index) => {
+                                        {cotizacionItems.filter(item => item.descripcion?.toLowerCase().includes(searchCotizacion.toLowerCase()) || item.codigo?.toLowerCase().includes(searchCotizacion.toLowerCase())).length > 0 ? cotizacionItems.filter(item => item.descripcion?.toLowerCase().includes(searchCotizacion.toLowerCase()) || item.codigo?.toLowerCase().includes(searchCotizacion.toLowerCase())).map((item, index) => {
                                             const itemTotal = Number(item.cantidad) * Number(item.precio_unitario);
                                             return (
                                                 <tr key={item.id}>
@@ -2189,20 +2289,31 @@ export default function Proyectos() {
 
                 {activeTab === 'historial' && (
                     <div>
+                        <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>Historial del Proyecto</h2>
                         <div className="filter-bar" style={{ gap: 12 }}>
-                            <select className="form-select" value={filterBrigada} onChange={e => setFilterBrigada(e.target.value)}>
-                                <option value="">Todas las brigadas</option>
-                                {proyectoBrigadas.map(pb => (
-                                    <option key={pb.brigada_id} value={pb.brigada_id}>{pb.brigadas?.nombre}</option>
-                                ))}
-                            </select>
-                            <select className="form-select" value={filterTipoHistorial} onChange={e => setFilterTipoHistorial(e.target.value)}>
-                                <option value="">Todos los tipos</option>
-                                <option value="consumo">Consumo diario</option>
-                                <option value="asignacion">Asignación de materiales</option>
-                                <option value="traspaso">Traspaso de inventario</option>
-                                <option value="estado">Cambios de estado</option>
-                            </select>
+                            <SearchableSelect
+                                value={filterBrigada}
+                                onChange={val => setFilterBrigada(val)}
+                                placeholder="Todas las brigadas"
+                                searchPlaceholder="Buscar brigada..."
+                                options={[
+                                    { value: '', label: 'Todas las brigadas' },
+                                    ...proyectoBrigadas.map(pb => ({ value: pb.brigada_id, label: pb.brigadas?.nombre || '' }))
+                                ]}
+                            />
+                            <SearchableSelect
+                                value={filterTipoHistorial}
+                                onChange={val => setFilterTipoHistorial(val)}
+                                placeholder="Todos los tipos"
+                                searchPlaceholder="Buscar tipo..."
+                                options={[
+                                    { value: '', label: 'Todos los tipos' },
+                                    { value: 'consumo', label: 'Consumo diario' },
+                                    { value: 'asignacion', label: 'Asignación de materiales' },
+                                    { value: 'traspaso', label: 'Traspaso de inventario' },
+                                    { value: 'estado', label: 'Cambios de estado' }
+                                ]}
+                            />
                         </div>
                         <div className="table-container">
                             <table>
@@ -2270,7 +2381,7 @@ export default function Proyectos() {
                 {activeTab === 'almacen' && (
                     <div>
                         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                            <h3 style={{ fontSize: 16, fontWeight: 600 }}>Almacén del Proyecto</h3>
+                            <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Almacén del Proyecto</h2>
                             {selectedProyecto.estado === 'activo' && (
                                 <button className="btn btn-primary" onClick={() => setShowAddAlmacen(true)}>
                                     <Plus size={16} /> Agregar Material
@@ -2278,9 +2389,25 @@ export default function Proyectos() {
                             )}
                         </div>
 
+                        <div className="search-bar" style={{ marginBottom: 12 }}>
+                            <Search size={16} />
+                            <input
+                                type="text"
+                                placeholder="Buscar material..."
+                                value={searchAlmacen}
+                                onChange={e => setSearchAlmacen(e.target.value)}
+                            />
+                        </div>
+
                         <div style={{ marginBottom: 24 }}>
-                            <h4 style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8 }}>Total Histórico Asignado al Proyecto</h4>
-                            <div className="table-container">
+                            <div
+                                onClick={() => toggleSection('almacenHistorico')}
+                                style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8, userSelect: 'none' }}
+                            >
+                                <ChevronDown size={15} style={{ color: 'var(--text-muted)', transition: 'transform 0.25s ease', transform: collapsedSections['almacenHistorico'] ? 'rotate(-90deg)' : 'rotate(0deg)', flexShrink: 0 }} />
+                                <h4 style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>Total Histórico Asignado al Proyecto</h4>
+                            </div>
+                            {!collapsedSections['almacenHistorico'] && <div className="table-container">
                                 {(() => {
                                     const asignaciones = proyectoHistorial.filter(h => h.motivo && h.motivo.startsWith('Material agregado al almacén: '));
 
@@ -2329,7 +2456,7 @@ export default function Proyectos() {
                                         }
                                     });
 
-                                    const asignadosList = Object.values(totalAsignadoMap).filter(item => item.total > 0).sort((a, b) => a.nombre.localeCompare(b.nombre));
+                                    const asignadosList = Object.values(totalAsignadoMap).filter(item => item.total > 0).sort((a, b) => a.nombre.localeCompare(b.nombre)).filter(item => item.nombre?.toLowerCase().includes(searchAlmacen.toLowerCase()));
 
                                     if (asignadosList.length === 0) {
                                         return <p style={{ padding: '12px 16px', color: 'var(--text-muted)', fontStyle: 'italic', fontSize: 13 }}>No hay histórico de asignaciones registradas.</p>;
@@ -2356,21 +2483,29 @@ export default function Proyectos() {
                                         </table>
                                     );
                                 })()}
-                            </div>
+                            </div>}
                         </div>
 
                         {(() => {
                             const isCompleted = selectedProyecto.estado === 'completado';
-                            const itemsConStock = proyectoInventario.filter(pi => pi.cantidad > 0);
+                            const itemsConStock = proyectoInventario.filter(pi => pi.cantidad > 0).filter(pi => pi.materiales?.nombre?.toLowerCase().includes(searchAlmacen.toLowerCase()));
                             const title = isCompleted ? 'Materiales a Devolver al Cliente' : 'Existencia Actual';
                             const columnTitle = isCompleted ? 'Cantidad a Devolver' : 'Cantidad Disponible';
                             const color = isCompleted ? 'var(--accent-orange)' : 'var(--accent-green)';
+                            const sectionKey = isCompleted ? 'almacenDevolver' : 'almacenExistencia';
 
                             return (
                                 <>
-                                    <h4 style={{ fontSize: 14, color: 'var(--text-secondary)', marginBottom: 8, marginTop: 16 }}>
-                                        {title}
-                                    </h4>
+                                    <div
+                                        onClick={() => toggleSection(sectionKey)}
+                                        style={{ display: 'flex', alignItems: 'center', gap: 8, cursor: 'pointer', marginBottom: 8, marginTop: 16, userSelect: 'none' }}
+                                    >
+                                        <ChevronDown size={15} style={{ color: 'var(--text-muted)', transition: 'transform 0.25s ease', transform: collapsedSections[sectionKey] ? 'rotate(-90deg)' : 'rotate(0deg)', flexShrink: 0 }} />
+                                        <h4 style={{ fontSize: 14, color: 'var(--text-secondary)', margin: 0 }}>
+                                            {title}
+                                        </h4>
+                                    </div>
+                                    {!collapsedSections[sectionKey] && (<>
                                     {isCompleted && itemsConStock.length > 0 && (
                                         <div style={{ padding: '10px 14px', background: 'var(--accent-orange-bg)', border: '1px solid var(--accent-orange)', borderRadius: 'var(--radius-sm)', marginBottom: 12, fontSize: 13, color: 'var(--accent-orange)', display: 'flex', alignItems: 'center', gap: 8 }}>
                                             📦 Proyecto completado — estos materiales sobrantes deben ser devueltos al cliente.
@@ -2394,6 +2529,7 @@ export default function Proyectos() {
                                     ) : (
                                         <div className="empty-state"><Package size={32} /><h4>{isCompleted ? 'Sin materiales sobrantes' : 'Almacén vacío'}</h4><p>{isCompleted ? 'No quedan materiales por devolver.' : 'Agregue materiales desde el inventario global'}</p></div>
                                     )}
+                                    </>)}
                                 </>
                             );
                         })()}
@@ -2457,7 +2593,7 @@ export default function Proyectos() {
                     return (
                         <div>
                             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-                                <h3 style={{ fontSize: 16, fontWeight: 600 }}>Gastos del Proyecto</h3>
+                                <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', margin: 0 }}>Gastos del Proyecto</h2>
                                 <button className="btn btn-primary" onClick={() => setShowAddGasto(true)}>
                                     <Plus size={16} /> Registrar Gasto
                                 </button>
@@ -2512,10 +2648,13 @@ export default function Proyectos() {
                                 <form onSubmit={handleAddAlmacen}>
                                     {almacenRows.map((row, i) => (
                                         <div className="bulk-row" key={i}>
-                                            <select className="form-select" value={row.material_id} onChange={e => setAlmacenRows(almacenRows.map((r, idx) => idx === i ? { ...r, material_id: e.target.value } : r))}>
-                                                <option value="">Seleccionar material...</option>
-                                                {materiales.map(m => { const inv = Array.isArray(m.inventario) ? m.inventario[0] : m.inventario; return <option key={m.id} value={m.id}>{m.codigo ? `[${m.codigo}] ` : ''}{m.nombre} (Stock: {inv?.cantidad ?? 0})</option>; })}
-                                            </select>
+                                            <SearchableSelect
+                                                value={row.material_id}
+                                                onChange={val => setAlmacenRows(almacenRows.map((r, idx) => idx === i ? { ...r, material_id: val } : r))}
+                                                placeholder="Seleccionar material..."
+                                                searchPlaceholder="Buscar material..."
+                                                options={materiales.map(m => { const inv = Array.isArray(m.inventario) ? m.inventario[0] : m.inventario; return { value: m.id, label: `${m.codigo ? `[${m.codigo}] ` : ''}${m.nombre}`, sublabel: `Stock: ${inv?.cantidad ?? 0}` }; })}
+                                            />
                                             <input className="form-input" type="number" min="1" step="1" placeholder="Cantidad" value={row.cantidad} onChange={e => {
                                                 const val = e.target.value.replace(/[^0-9]/g, '');
                                                 setAlmacenRows(almacenRows.map((r, idx) => idx === i ? { ...r, cantidad: val } : r));
@@ -2549,10 +2688,13 @@ export default function Proyectos() {
                                     {devolucionRows.map((row, i) => (
                                         <div key={i} style={{ marginBottom: 12 }}>
                                             <div className="bulk-row">
-                                                <select className="form-select" value={row.material_id} onChange={e => setDevolucionRows(devolucionRows.map((r, idx) => idx === i ? { ...r, material_id: e.target.value } : r))}>
-                                                    <option value="">Seleccionar material...</option>
-                                                    {proyectoInventario.filter(pi => pi.cantidad > 0).map(pi => <option key={pi.material_id} value={pi.material_id}>{pi.materiales?.nombre} (Disponible: {pi.cantidad})</option>)}
-                                                </select>
+                                                <SearchableSelect
+                                                    value={row.material_id}
+                                                    onChange={val => setDevolucionRows(devolucionRows.map((r, idx) => idx === i ? { ...r, material_id: val } : r))}
+                                                    placeholder="Seleccionar material..."
+                                                    searchPlaceholder="Buscar material..."
+                                                    options={proyectoInventario.filter(pi => pi.cantidad > 0).map(pi => ({ value: pi.material_id, label: pi.materiales?.nombre || '', sublabel: `Disponible: ${pi.cantidad}` }))}
+                                                />
                                                 <input className="form-input" type="number" min="1" step="1" placeholder="Cantidad" value={row.cantidad} onChange={e => {
                                                     const val = e.target.value.replace(/[^0-9]/g, '');
                                                     setDevolucionRows(devolucionRows.map((r, idx) => idx === i ? { ...r, cantidad: val } : r));
@@ -2592,13 +2734,19 @@ export default function Proyectos() {
                                         </div>
                                         <div className="form-group">
                                             <label>Categoría</label>
-                                            <select className="form-select" value={gastoForm.categoria} onChange={e => setGastoForm({ ...gastoForm, categoria: e.target.value })}>
-                                                <option value="combustible">Combustible</option>
-                                                <option value="dieta">Dieta</option>
-                                                <option value="mantenimiento_vehiculo">Mantenimiento Vehículo</option>
-                                                <option value="estadia">Estadía</option>
-                                                <option value="otros">Otros</option>
-                                            </select>
+                                            <SearchableSelect
+                                                value={gastoForm.categoria}
+                                                onChange={val => setGastoForm({ ...gastoForm, categoria: val })}
+                                                placeholder="Seleccionar categoría..."
+                                                searchPlaceholder="Buscar categoría..."
+                                                options={[
+                                                    { value: 'combustible', label: 'Combustible' },
+                                                    { value: 'dieta', label: 'Dieta' },
+                                                    { value: 'mantenimiento_vehiculo', label: 'Mantenimiento Vehículo' },
+                                                    { value: 'estadia', label: 'Estadía' },
+                                                    { value: 'otros', label: 'Otros' }
+                                                ]}
+                                            />
                                         </div>
                                     </div>
                                     <div className="form-group">
@@ -2638,13 +2786,14 @@ export default function Proyectos() {
                                 <form onSubmit={handleAsignarBrigada}>
                                     <div className="form-group">
                                         <label>Brigada</label>
-                                        <select className="form-select" required value={brigadaToAssign}
-                                            onChange={e => setBrigadaToAssign(e.target.value)}>
-                                            <option value="">Seleccionar brigada...</option>
-                                            {brigadas.filter(b => !proyectoBrigadas.find(pb => pb.brigada_id === b.id)).map(b => (
-                                                <option key={b.id} value={b.id}>{b.nombre}</option>
-                                            ))}
-                                        </select>
+                                        <SearchableSelect
+                                            value={brigadaToAssign}
+                                            onChange={val => setBrigadaToAssign(val)}
+                                            placeholder="Seleccionar brigada..."
+                                            searchPlaceholder="Buscar brigada..."
+                                            required
+                                            options={brigadas.filter(b => !proyectoBrigadas.find(pb => pb.brigada_id === b.id)).map(b => ({ value: b.id, label: b.nombre }))}
+                                        />
                                     </div>
                                     <div className="form-actions">
                                         <button type="button" className="btn btn-secondary" onClick={() => setShowAsignarBrigada(false)}>Cancelar</button>
@@ -2671,13 +2820,14 @@ export default function Proyectos() {
                                     <div className="form-row">
                                         <div className="form-group">
                                             <label>Brigada *</label>
-                                            <select className="form-select" required value={consumoForm.brigada_id}
-                                                onChange={e => setConsumoForm({ ...consumoForm, brigada_id: e.target.value })}>
-                                                <option value="">Seleccionar brigada...</option>
-                                                {proyectoBrigadas.map(pb => (
-                                                    <option key={pb.brigada_id} value={pb.brigada_id}>{pb.brigadas?.nombre}</option>
-                                                ))}
-                                            </select>
+                                            <SearchableSelect
+                                                value={consumoForm.brigada_id}
+                                                onChange={val => setConsumoForm({ ...consumoForm, brigada_id: val })}
+                                                placeholder="Seleccionar brigada..."
+                                                searchPlaceholder="Buscar brigada..."
+                                                required
+                                                options={proyectoBrigadas.map(pb => ({ value: pb.brigada_id, label: pb.brigadas?.nombre || '' }))}
+                                            />
                                         </div>
                                         <div className="form-group">
                                             <label>Fecha *</label>
@@ -2691,19 +2841,17 @@ export default function Proyectos() {
                                     </div>
                                     {consumoRows.map((row, i) => (
                                         <div className="bulk-row" key={i}>
-                                            <select className="form-select" value={row.material_id}
-                                                onChange={e => {
+                                            <SearchableSelect
+                                                value={row.material_id}
+                                                onChange={val => {
                                                     setConsumoRows(consumoRows.map((r, idx) =>
-                                                        idx === i ? { ...r, material_id: e.target.value } : r
+                                                        idx === i ? { ...r, material_id: val } : r
                                                     ));
-                                                }}>
-                                                <option value="">Seleccionar material...</option>
-                                                {proyectoInventario.filter(pi => pi.cantidad > 0).map(pi => (
-                                                    <option key={pi.material_id} value={pi.material_id}>
-                                                        {pi.materiales?.nombre} (Almacén: {pi.cantidad})
-                                                    </option>
-                                                ))}
-                                            </select>
+                                                }}
+                                                placeholder="Seleccionar material..."
+                                                searchPlaceholder="Buscar material..."
+                                                options={proyectoInventario.filter(pi => pi.cantidad > 0).map(pi => ({ value: pi.material_id, label: pi.materiales?.nombre || '', sublabel: `Almacén: ${pi.cantidad}` }))}
+                                            />
                                             <input className="form-input" type="number" min="1" step="1"
                                                 placeholder="Cantidad"
                                                 value={row.cantidad}
@@ -2757,13 +2905,14 @@ export default function Proyectos() {
                                     <div className="form-row">
                                         <div className="form-group">
                                             <label>Brigada *</label>
-                                            <select className="form-select" required value={consumoDiarioForm.brigada_id}
-                                                onChange={e => setConsumoDiarioForm({ ...consumoDiarioForm, brigada_id: e.target.value })}>
-                                                <option value="">Seleccionar brigada...</option>
-                                                {proyectoBrigadas.map(pb => (
-                                                    <option key={pb.brigada_id} value={pb.brigada_id}>{pb.brigadas?.nombre}</option>
-                                                ))}
-                                            </select>
+                                            <SearchableSelect
+                                                value={consumoDiarioForm.brigada_id}
+                                                onChange={val => setConsumoDiarioForm({ ...consumoDiarioForm, brigada_id: val })}
+                                                placeholder="Seleccionar brigada..."
+                                                searchPlaceholder="Buscar brigada..."
+                                                required
+                                                options={proyectoBrigadas.map(pb => ({ value: pb.brigada_id, label: pb.brigadas?.nombre || '' }))}
+                                            />
                                         </div>
                                         <div className="form-group">
                                             <label>Fecha *</label>
@@ -2793,23 +2942,21 @@ export default function Proyectos() {
                                         });
                                         return (
                                             <div className="bulk-row" key={i}>
-                                                <select className="form-select" value={row.material_id}
-                                                    onChange={e => {
+                                                <SearchableSelect
+                                                    value={row.material_id}
+                                                    onChange={val => {
                                                         setConsumoDiarioRows(consumoDiarioRows.map((r, idx) =>
-                                                            idx === i ? { ...r, material_id: e.target.value } : r
+                                                            idx === i ? { ...r, material_id: val } : r
                                                         ));
-                                                    }}>
-                                                    <option value="">Seleccionar material...</option>
-                                                    {availableMats.map(m => {
+                                                    }}
+                                                    placeholder="Seleccionar material..."
+                                                    searchPlaceholder="Buscar material..."
+                                                    options={availableMats.map(m => {
                                                         const totalA = asig.filter(a => a.material_id === m.id).reduce((s, a) => s + a.cantidad, 0);
                                                         const totalC = cons.filter(c => c.material_id === m.id).reduce((s, c) => s + c.cantidad, 0);
-                                                        return (
-                                                            <option key={m.id} value={m.id}>
-                                                                {m.nombre} (Disponible: {totalA - totalC})
-                                                            </option>
-                                                        );
+                                                        return { value: m.id, label: m.nombre, sublabel: `Disponible: ${totalA - totalC}` };
                                                     })}
-                                                </select>
+                                                />
                                                 <input className="form-input" type="number" min="1" step="1"
                                                     placeholder="Cantidad"
                                                     value={row.cantidad}
@@ -2959,20 +3106,17 @@ export default function Proyectos() {
                                         {removeAction === 'transferir' && (
                                             <div className="form-group" style={{ marginTop: 12, paddingLeft: 24 }}>
                                                 <label>Seleccione brigada destino:</label>
-                                                <select
-                                                    className="form-select"
-                                                    required
+                                                <SearchableSelect
                                                     value={transferTarget}
-                                                    onChange={e => setTransferTarget(e.target.value)}
-                                                >
-                                                    <option value="">Seleccionar brigada...</option>
-                                                    {proyectoBrigadas
+                                                    onChange={val => setTransferTarget(val)}
+                                                    placeholder="Seleccionar brigada..."
+                                                    searchPlaceholder="Buscar brigada..."
+                                                    required
+                                                    options={proyectoBrigadas
                                                         .filter(pb => pb.brigada_id !== brigadaToRemove.brigada_id)
-                                                        .map(pb => (
-                                                            <option key={pb.brigada_id} value={pb.brigada_id}>{pb.brigadas?.nombre}</option>
-                                                        ))
+                                                        .map(pb => ({ value: pb.brigada_id, label: pb.brigadas?.nombre || '' }))
                                                     }
-                                                </select>
+                                                />
                                             </div>
                                         )}
 
