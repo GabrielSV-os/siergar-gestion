@@ -89,12 +89,28 @@ export default function Brigadas() {
     }
 
     async function handleDeleteBrigada(brigada) {
-        if (!confirm(`¿Estás seguro de eliminar la brigada "${brigada.nombre}"? Se eliminará todo el personal asignado.`)) return;
+        // Check how many attendance records exist for this brigade
+        const { count: asistenciaCount } = await supabase
+            .from('brigada_asistencia')
+            .select('id', { count: 'exact', head: true })
+            .eq('brigada_id', brigada.id);
+
+        const asistenciaWarning = asistenciaCount > 0
+            ? `\n\n⚠️ ADVERTENCIA: Esta brigada tiene ${asistenciaCount} registro(s) de asistencia que también se borrarán permanentemente y no se podrán recuperar.`
+            : '';
+
+        if (!confirm(`¿Estás seguro de eliminar la brigada "${brigada.nombre}"? Se eliminará todo el personal asignado.${asistenciaWarning}\n\nEsta acción no se puede deshacer.`)) return;
+
+        // If there are attendance records, require a second confirmation
+        if (asistenciaCount > 0) {
+            if (!confirm(`Confirma que entiendes que se borrarán ${asistenciaCount} registros de asistencia de forma permanente.\n\n¿Continuar con la eliminación?`)) return;
+        }
+
         // Remove all personnel assignments first
         await supabase.from('brigada_personal').delete().eq('brigada_id', brigada.id);
         // Remove brigade from projects
         await supabase.from('proyecto_brigada').delete().eq('brigada_id', brigada.id);
-        // Delete the brigade
+        // Delete the brigade (CASCADE will also delete brigada_asistencia records)
         const { error } = await supabase.from('brigadas').delete().eq('id', brigada.id);
         if (error) { toast(error.message, 'error'); return; }
         toast('Brigada eliminada correctamente');
