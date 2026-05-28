@@ -1063,14 +1063,13 @@ export default function Proyectos() {
 
         // Summary metrics
         const consumosDiarios = consumos.filter(c => c.tipo === 'consumo');
-        // Deduplicate by fecha+brigada_id: same session = same hours, count once
-        const _seenSessionsPDF = new Set();
-        const totalHoras = consumosDiarios.reduce((s, c) => {
-            const key = `${c.fecha}_${c.brigada_id}`;
-            if (_seenSessionsPDF.has(key)) return s;
-            _seenSessionsPDF.add(key);
-            return s + (Number(c.horas) || 0);
-        }, 0);
+        // Deduplicate by fecha only: same date = same work session regardless of how many brigades
+        const _dateHorasPDF = consumosDiarios.reduce((map, c) => {
+            const h = Number(c.horas) || 0;
+            if (!map[c.fecha] || h > map[c.fecha]) map[c.fecha] = h;
+            return map;
+        }, {});
+        const totalHoras = Object.values(_dateHorasPDF).reduce((s, h) => s + h, 0);
         const diasTrabajados = new Set(consumosDiarios.map(c => c.fecha)).size;
         const totalGastos = proyectoGastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
 
@@ -1534,15 +1533,14 @@ export default function Proyectos() {
                                 const consumosAsignacion = consumos.filter(c => !c.tipo || c.tipo === 'asignacion');
                                 const consumosDiarios = consumos.filter(c => c.tipo === 'consumo');
 
-                                // Total hours — deduplicate by fecha+brigada_id so the same session
-                                // isn't counted once per material consumed that day
-                                const _seenSessionsReport = new Set();
-                                const totalHoras = consumosDiarios.reduce((s, c) => {
-                                    const key = `${c.fecha}_${c.brigada_id}`;
-                                    if (_seenSessionsReport.has(key)) return s;
-                                    _seenSessionsReport.add(key);
-                                    return s + (Number(c.horas) || 0);
-                                }, 0);
+                                // Total hours — deduplicate by fecha only: same date = same work session
+                                // regardless of how many brigades or materials were recorded that day
+                                const _dateHorasReport = consumosDiarios.reduce((map, c) => {
+                                    const h = Number(c.horas) || 0;
+                                    if (!map[c.fecha] || h > map[c.fecha]) map[c.fecha] = h;
+                                    return map;
+                                }, {});
+                                const totalHoras = Object.values(_dateHorasReport).reduce((s, h) => s + h, 0);
 
                                 // Unique work days
                                 const diasTrabajados = new Set(consumosDiarios.map(c => c.fecha)).size;
@@ -2127,23 +2125,25 @@ export default function Proyectos() {
                                                     const mName = c.materiales?.nombre;
                                                     if (!mName) return acc;
                                                     if (!acc[mName]) {
-                                                        acc[mName] = { total: 0, dates: new Set(), hours: 0, name: mName, seenSessions: new Set() };
+                                                        acc[mName] = { total: 0, dates: new Set(), hours: 0, name: mName, dateHorasMap: {} };
                                                     }
                                                     acc[mName].total += Number(c.cantidad) || 0;
-                                                    acc[mName].dates.add(c.fecha || c.created_at?.split('T')[0]);
-                                                    // Count hours once per fecha+brigada session for this material
-                                                    const sessionKey = `${c.fecha}_${c.brigada_id}`;
-                                                    if (!acc[mName].seenSessions.has(sessionKey)) {
-                                                        acc[mName].seenSessions.add(sessionKey);
-                                                        acc[mName].hours += Number(c.horas) || 0;
+                                                    const fecha = c.fecha || c.created_at?.split('T')[0];
+                                                    acc[mName].dates.add(fecha);
+                                                    // Count max hours per date: same date = same work session
+                                                    const h = Number(c.horas) || 0;
+                                                    if (!acc[mName].dateHorasMap[fecha] || h > acc[mName].dateHorasMap[fecha]) {
+                                                        acc[mName].dateHorasMap[fecha] = h;
                                                     }
                                                     return acc;
                                                 }, {});
 
                                             const globalEstimates = Object.values(globalAggregated).map(e => {
-                                                const perHour = e.hours > 0 ? (e.total / e.hours).toFixed(2) : '—';
+                                                const hours = Object.values(e.dateHorasMap).reduce((s, h) => s + h, 0);
+                                                const perHour = hours > 0 ? (e.total / hours).toFixed(2) : '—';
                                                 return {
                                                     ...e,
+                                                    hours,
                                                     days: e.dates.size,
                                                     perHour
                                                 };
