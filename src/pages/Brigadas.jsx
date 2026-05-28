@@ -187,12 +187,17 @@ export default function Brigadas() {
         if (!data) return;
 
         const summary = data.reduce((acc, curr) => {
-            const key = `${curr.personal_id}_${curr.brigada_id}`;
+            // Group by personal_id only — if an employee moved between brigades
+            // during the period they should appear as a single row, not duplicated.
+            const key = curr.personal_id;
+            const brigadaNombre = curr.brigadas?.nombre || 'Sin Brigada';
+
             if (!acc[key]) {
                 acc[key] = {
                     nombre: curr.personal?.nombre || 'Desconocido',
                     cargo: curr.personal?.cargo || 'Sin Cargo',
-                    brigada: curr.brigadas?.nombre || 'Sin Brigada',
+                    brigada: brigadaNombre,
+                    _brigadas: new Set([brigadaNombre]),
                     asistencias: 0,
                     mediosDia: 0,
                     ausencias: 0,
@@ -201,6 +206,10 @@ export default function Brigadas() {
                     fechasMedioDia: [],
                     fechasAusentes: []
                 };
+            } else {
+                // Track all brigades this person appeared in
+                acc[key]._brigadas.add(brigadaNombre);
+                acc[key].brigada = Array.from(acc[key]._brigadas).join(' / ');
             }
 
             const parts = curr.fecha.split('-');
@@ -223,10 +232,9 @@ export default function Brigadas() {
             return acc;
         }, {});
 
-        const historyList = Object.values(summary).sort((a, b) => {
-            const brigCmp = a.brigada.localeCompare(b.brigada);
-            return brigCmp !== 0 ? brigCmp : a.nombre.localeCompare(b.nombre);
-        });
+        const historyList = Object.values(summary).sort((a, b) =>
+            a.nombre.localeCompare(b.nombre)
+        );
         setAsistenciaHistory(historyList);
     }
 
