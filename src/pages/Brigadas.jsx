@@ -89,12 +89,13 @@ export default function Brigadas() {
     }
 
     async function handleDeleteBrigada(brigada) {
-        if (!confirm(`¿Estás seguro de eliminar la brigada "${brigada.nombre}"? Se eliminará todo el personal asignado.`)) return;
+        if (!confirm(`¿Estás seguro de eliminar la brigada "${brigada.nombre}"?\n\nSe desvinculará todo el personal asignado. Las asistencias del personal NO se eliminarán.\n\nEsta acción no se puede deshacer.`)) return;
+
         // Remove all personnel assignments first
         await supabase.from('brigada_personal').delete().eq('brigada_id', brigada.id);
         // Remove brigade from projects
         await supabase.from('proyecto_brigada').delete().eq('brigada_id', brigada.id);
-        // Delete the brigade
+        // Delete the brigade (brigada_asistencia.brigada_id will be set to NULL via ON DELETE SET NULL)
         const { error } = await supabase.from('brigadas').delete().eq('id', brigada.id);
         if (error) { toast(error.message, 'error'); return; }
         toast('Brigada eliminada correctamente');
@@ -135,7 +136,7 @@ export default function Brigadas() {
     }, [showGlobalAsistencia, globalAsistenciaTab, filterAsistenciaDesde, filterAsistenciaHasta, filterBrigadaId]);
 
     async function loadGlobalAsistencia(date) {
-        // Load all active brigade members with their brigade info (only enabled personal)
+        // Load all active brigade members (ordered: líderes first)
         const { data: allMembers } = await supabase.from('brigada_personal')
             .select('personal_id, brigada_id, es_lider, personal(nombre, cargo, activo), brigadas(nombre)')
             .eq('activo', true)
@@ -146,16 +147,24 @@ export default function Brigadas() {
             return;
         }
 
-        // Filter out disabled personal
-        const enabledMembers = allMembers.filter(m => m.personal?.activo !== false);
+        // Deduplicate by personal_id — attendance is per person, not per brigade.
+        // If a person is in multiple brigades, they appear once (first occurrence = priority brigade).
+        const seenIds = new Set();
+        const uniqueMembers = allMembers
+            .filter(m => m.personal?.activo !== false)
+            .filter(m => {
+                if (seenIds.has(m.personal_id)) return false;
+                seenIds.add(m.personal_id);
+                return true;
+            });
 
-        // Load existing attendance for this date
+        // Load existing attendance for this date (match by personal_id only)
         const { data: existing } = await supabase.from('brigada_asistencia')
             .select('*')
             .eq('fecha', date);
 
-        const records = enabledMembers.map(m => {
-            const saved = existing?.find(d => d.personal_id === m.personal_id && d.brigada_id === m.brigada_id);
+        const records = uniqueMembers.map(m => {
+            const saved = existing?.find(d => d.personal_id === m.personal_id);
             return {
                 personal_id: m.personal_id,
                 brigada_id: m.brigada_id,
@@ -173,60 +182,108 @@ export default function Brigadas() {
     async function loadGlobalAsistenciaHistory(desde, hasta, brigadaFilter) {
         if (!desde || !hasta) return;
 
+        // Attendance is per-person — build base query without brigade join
         let query = supabase.from('brigada_asistencia')
-            .select('fecha, asistio, medio_dia, personal_id, brigada_id, personal(nombre, cargo), brigadas(nombre)')
+            .select('fecha, asistio, medio_dia, personal_id, personal(nombre, cargo)')
             .gte('fecha', desde)
             .lte('fecha', hasta)
             .order('fecha', { ascending: true });
 
+        // If filtering by brigade, resolve which personal_ids belong to it
         if (brigadaFilter && brigadaFilter !== 'all') {
-            query = query.eq('brigada_id', brigadaFilter);
+            const { data: brigMembers } = await supabase
+                .from('brigada_personal')
+                .select('personal_id')
+                .eq('brigada_id', brigadaFilter)
+                .eq('activo', true);
+            const personalIds = (brigMembers || []).map(m => m.personal_id);
+            if (personalIds.length === 0) { setAsistenciaHistory([]); return; }
+            query = query.in('personal_id', personalIds);
         }
 
-        const { data } = await query;
+        const [{ data }, { data: assignments }] = await Promise.all([
+            query,
+            supabase.from('brigada_personal')
+                .select('personal_id, brigadas(nombre)')
+                .eq('activo', true)
+        ]);
         if (!data) return;
 
+        // Build a map of personal_id → current brigade name(s)
+        const brigadeByPerson = {};
+        (assignments || []).forEach(a => {
+            const bName = a.brigadas?.nombre;
+            if (!bName) return;
+            if (!brigadeByPerson[a.personal_id]) {
+                brigadeByPerson[a.personal_id] = new Set();
+            }
+            brigadeByPerson[a.personal_id].add(bName);
+        });
+
+        // Group by personal_id — one record per person per date (DB enforces uniqueness,
+        // but _dateMap is kept as a safety net for any legacy duplicate rows)
         const summary = data.reduce((acc, curr) => {
-            const key = `${curr.personal_id}_${curr.brigada_id}`;
+            const key = curr.personal_id;
+
             if (!acc[key]) {
+                const brigSet = brigadeByPerson[key];
                 acc[key] = {
                     nombre: curr.personal?.nombre || 'Desconocido',
                     cargo: curr.personal?.cargo || 'Sin Cargo',
-                    brigada: curr.brigadas?.nombre || 'Sin Brigada',
-                    asistencias: 0,
-                    mediosDia: 0,
-                    ausencias: 0,
-                    total: 0,
-                    fechasAsistidas: [],
-                    fechasMedioDia: [],
-                    fechasAusentes: []
+                    brigada: brigSet ? Array.from(brigSet).join(' / ') : 'Sin Brigada',
+                    _dateMap: {}
                 };
             }
 
-            const parts = curr.fecha.split('-');
-            const formatDia = `${parts[2]}/${parts[1]}`;
-
-            acc[key].total += 1;
-            if (curr.asistio) {
-                if (curr.medio_dia) {
-                    acc[key].mediosDia += 1;
-                    acc[key].asistencias += 0.5;
-                    acc[key].fechasMedioDia.push(formatDia);
-                } else {
-                    acc[key].asistencias += 1;
-                    acc[key].fechasAsistidas.push(formatDia);
-                }
-            } else {
-                acc[key].ausencias += 1;
-                acc[key].fechasAusentes.push(formatDia);
+            const fecha = curr.fecha;
+            const rank = curr.asistio ? (curr.medio_dia ? 2 : 3) : 1;
+            const existing = acc[key]._dateMap[fecha];
+            const existingRank = existing ? (existing.asistio ? (existing.medio_dia ? 2 : 3) : 1) : 0;
+            if (rank > existingRank) {
+                acc[key]._dateMap[fecha] = { asistio: curr.asistio, medio_dia: !!curr.medio_dia };
             }
+
             return acc;
         }, {});
 
-        const historyList = Object.values(summary).sort((a, b) => {
-            const brigCmp = a.brigada.localeCompare(b.brigada);
-            return brigCmp !== 0 ? brigCmp : a.nombre.localeCompare(b.nombre);
-        });
+        const historyList = Object.values(summary).map(emp => {
+            let asistencias = 0, mediosDia = 0, ausencias = 0;
+            const fechasAsistidas = [], fechasMedioDia = [], fechasAusentes = [];
+
+            Object.entries(emp._dateMap)
+                .sort(([a], [b]) => a.localeCompare(b))
+                .forEach(([fecha, { asistio, medio_dia }]) => {
+                    const parts = fecha.split('-');
+                    const fmt = `${parts[2]}/${parts[1]}`;
+                    if (asistio) {
+                        if (medio_dia) {
+                            mediosDia += 1;
+                            asistencias += 0.5;
+                            fechasMedioDia.push(fmt);
+                        } else {
+                            asistencias += 1;
+                            fechasAsistidas.push(fmt);
+                        }
+                    } else {
+                        ausencias += 1;
+                        fechasAusentes.push(fmt);
+                    }
+                });
+
+            return {
+                nombre: emp.nombre,
+                cargo: emp.cargo,
+                brigada: emp.brigada,
+                asistencias,
+                mediosDia,
+                ausencias,
+                total: asistencias + ausencias,
+                fechasAsistidas,
+                fechasMedioDia,
+                fechasAusentes
+            };
+        }).sort((a, b) => a.nombre.localeCompare(b.nombre));
+
         setAsistenciaHistory(historyList);
     }
 
@@ -241,7 +298,7 @@ export default function Brigadas() {
                 medio_dia: r.medio_dia || false
             }));
 
-            const { error } = await supabase.from('brigada_asistencia').upsert(upserts, { onConflict: 'brigada_id,personal_id,fecha' });
+            const { error } = await supabase.from('brigada_asistencia').upsert(upserts, { onConflict: 'personal_id,fecha' });
             if (error) { toast(error.message, 'error'); return; }
             toast('Asistencia guardada correctamente');
         } finally {
@@ -1015,7 +1072,8 @@ export default function Brigadas() {
                                             options={availablePersonal.map(p => ({
                                                 value: p.id,
                                                 label: `${p.nombre}${p.cedula ? ` (${p.cedula})` : ''}${p.cargo ? ` — ${p.cargo}` : ''}`,
-                                                sublabel: p.activo === false ? '⚠ Personal deshabilitado — se rehabilitará al asignar' : undefined
+                                                sublabel: p.activo === false ? '⚠ Personal deshabilitado — se rehabilitará al asignar' : undefined,
+                                                warning: p.activo === false
                                             }))}
                                         />
                                     </div>
