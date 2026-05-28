@@ -1063,7 +1063,14 @@ export default function Proyectos() {
 
         // Summary metrics
         const consumosDiarios = consumos.filter(c => c.tipo === 'consumo');
-        const totalHoras = consumosDiarios.reduce((s, c) => s + (Number(c.horas) || 0), 0);
+        // Deduplicate by fecha+brigada_id: same session = same hours, count once
+        const _seenSessionsPDF = new Set();
+        const totalHoras = consumosDiarios.reduce((s, c) => {
+            const key = `${c.fecha}_${c.brigada_id}`;
+            if (_seenSessionsPDF.has(key)) return s;
+            _seenSessionsPDF.add(key);
+            return s + (Number(c.horas) || 0);
+        }, 0);
         const diasTrabajados = new Set(consumosDiarios.map(c => c.fecha)).size;
         const totalGastos = proyectoGastos.reduce((s, g) => s + (Number(g.monto) || 0), 0);
 
@@ -1527,8 +1534,15 @@ export default function Proyectos() {
                                 const consumosAsignacion = consumos.filter(c => !c.tipo || c.tipo === 'asignacion');
                                 const consumosDiarios = consumos.filter(c => c.tipo === 'consumo');
 
-                                // Total hours
-                                const totalHoras = consumosDiarios.reduce((s, c) => s + (Number(c.horas) || 0), 0);
+                                // Total hours — deduplicate by fecha+brigada_id so the same session
+                                // isn't counted once per material consumed that day
+                                const _seenSessionsReport = new Set();
+                                const totalHoras = consumosDiarios.reduce((s, c) => {
+                                    const key = `${c.fecha}_${c.brigada_id}`;
+                                    if (_seenSessionsReport.has(key)) return s;
+                                    _seenSessionsReport.add(key);
+                                    return s + (Number(c.horas) || 0);
+                                }, 0);
 
                                 // Unique work days
                                 const diasTrabajados = new Set(consumosDiarios.map(c => c.fecha)).size;
@@ -1758,10 +1772,12 @@ export default function Proyectos() {
                                                         pointStyle: 'circle',
                                                         font: { size: 12, family: 'Inter' },
                                                         generateLabels: (chart) => {
+                                                            const labelColor = getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1';
                                                             return chart.data.datasets.map((ds, i) => ({
                                                                 text: ds.shortLabel || ds.label,
                                                                 fillStyle: ds.borderColor,
                                                                 strokeStyle: ds.borderColor,
+                                                                fontColor: labelColor,
                                                                 lineWidth: 2,
                                                                 hidden: !chart.isDatasetVisible(i),
                                                                 datasetIndex: i,
@@ -2111,11 +2127,16 @@ export default function Proyectos() {
                                                     const mName = c.materiales?.nombre;
                                                     if (!mName) return acc;
                                                     if (!acc[mName]) {
-                                                        acc[mName] = { total: 0, dates: new Set(), hours: 0, name: mName };
+                                                        acc[mName] = { total: 0, dates: new Set(), hours: 0, name: mName, seenSessions: new Set() };
                                                     }
                                                     acc[mName].total += Number(c.cantidad) || 0;
                                                     acc[mName].dates.add(c.fecha || c.created_at?.split('T')[0]);
-                                                    acc[mName].hours += Number(c.horas) || 0;
+                                                    // Count hours once per fecha+brigada session for this material
+                                                    const sessionKey = `${c.fecha}_${c.brigada_id}`;
+                                                    if (!acc[mName].seenSessions.has(sessionKey)) {
+                                                        acc[mName].seenSessions.add(sessionKey);
+                                                        acc[mName].hours += Number(c.horas) || 0;
+                                                    }
                                                     return acc;
                                                 }, {});
 
