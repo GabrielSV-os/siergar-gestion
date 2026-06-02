@@ -750,7 +750,7 @@ export default function Brigadas() {
                                         {asistenciaHistory.map((h, i) => {
                                             const isExpanded = expandedRows[i];
                                             return (
-                                            <tr key={i} onClick={() => setExpandedRows(prev => ({ ...prev, [i]: !prev[i] }))} style={{ cursor: 'pointer' }}>
+                                            <tr key={i} onClick={() => setExpandedRows(prev => ({ ...prev, [i]: !prev[i] }))} style={{ cursor: 'pointer', transition: 'background-color 0.15s ease' }}>
                                                 <td style={{ fontWeight: 500, color: 'var(--text-primary)', verticalAlign: 'middle' }}>{h.nombre}</td>
                                                 <td style={{ verticalAlign: 'middle' }}>
                                                     <span style={{
@@ -769,7 +769,7 @@ export default function Brigadas() {
                                                         <ChevronDown size={14} style={{ transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', opacity: 0.6 }} />
                                                     </div>
                                                     {isExpanded && (h.fechasAsistidas.length > 0 || h.fechasMedioDia.length > 0) && (
-                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 8 }}>
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 8, animation: 'expandDown 0.25s ease' }}>
                                                             {h.fechasAsistidas.map((f, idx) => (
                                                                 <span key={idx} style={{ fontSize: 11, padding: '2px 6px', background: 'rgba(34, 197, 94, 0.1)', color: 'var(--accent-green)', borderRadius: 12, border: '1px solid rgba(34, 197, 94, 0.2)' }}>
                                                                     {f}
@@ -789,7 +789,7 @@ export default function Brigadas() {
                                                         <ChevronDown size={14} style={{ transition: 'transform 0.2s ease', transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)', opacity: 0.6 }} />
                                                     </div>
                                                     {isExpanded && h.fechasAusentes.length > 0 && (
-                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 8 }}>
+                                                        <div style={{ display: 'flex', flexWrap: 'wrap', gap: 4, justifyContent: 'center', marginTop: 8, animation: 'expandDown 0.25s ease' }}>
                                                             {h.fechasAusentes.map((f, idx) => (
                                                                 <span key={idx} style={{ fontSize: 11, padding: '2px 6px', background: 'rgba(239, 68, 68, 0.1)', color: 'var(--accent-red)', borderRadius: 12, border: '1px solid rgba(239, 68, 68, 0.2)' }}>
                                                                     {f}
