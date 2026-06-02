@@ -2,6 +2,7 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import { ToastProvider } from './components/Toast';
 import Layout from './components/Layout';
 import ThemeToggle from './components/ThemeToggle';
+import ScrollToTop from './components/ScrollToTop';
 import Dashboard from './pages/Dashboard';
 import Inventario from './pages/Inventario';
 import Proyectos from './pages/Proyectos';
@@ -14,6 +15,7 @@ function App() {
   return (
     <ToastProvider>
       <ThemeToggle />
+      <ScrollToTop />
       <BrowserRouter>
         <Routes>
           <Route path="/" element={<Layout />}>
