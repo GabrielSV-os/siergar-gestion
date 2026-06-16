@@ -3,6 +3,7 @@ import { ToastProvider } from './components/Toast';
 import Layout from './components/Layout';
 import ThemeToggle from './components/ThemeToggle';
 import ScrollToTop from './components/ScrollToTop';
+import DemoBanner from './components/DemoBanner';
 import Dashboard from './pages/Dashboard';
 import Inventario from './pages/Inventario';
 import Proyectos from './pages/Proyectos';
@@ -14,6 +15,7 @@ import Manual from './pages/Manual';
 function App() {
   return (
     <ToastProvider>
+      <DemoBanner />
       <ThemeToggle />
       <ScrollToTop />
       <BrowserRouter>
@@ -22,7 +24,7 @@ function App() {
             <Route index element={<Dashboard />} />
             <Route path="inventario" element={<Inventario />} />
             <Route path="proyectos" element={<Proyectos />} />
-            <Route path="brigadas" element={<Brigadas />} />
+            <Route path="personal" element={<Brigadas />} />
             <Route path="notas" element={<Notas />} />
             <Route path="fabricacion" element={<Fabricacion />} />
             <Route path="manual" element={<Manual />} />

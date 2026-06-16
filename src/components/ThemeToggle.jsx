@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
-import { Sun, Moon, Palette, Settings } from 'lucide-react';
+import { Sun, Moon, Palette, Settings, FlaskConical } from 'lucide-react';
+import { demoMode } from '../lib/demoMode';
 
 export default function ThemeToggle() {
     const [theme, setTheme] = useState(() => {
@@ -11,7 +12,10 @@ export default function ThemeToggle() {
     });
 
     const [isOpen, setIsOpen] = useState(false);
+    const [isDemo, setIsDemo] = useState(demoMode.enabled);
     const dropdownRef = useRef(null);
+
+    useEffect(() => demoMode.subscribe(setIsDemo), []);
 
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', theme);
@@ -135,6 +139,31 @@ export default function ThemeToggle() {
                                     />
                                 ))}
                             </div>
+                        </div>
+
+                        <div className="animated-dropdown-separator" />
+
+                        <div className="animated-dropdown-item theme-item" style={{ justifyContent: 'space-between', cursor: 'default' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                                <FlaskConical size={16} style={{ color: isDemo ? '#f59e0b' : 'var(--text-secondary)' }} />
+                                <span>Modo Prueba</span>
+                            </div>
+                            <button
+                                onClick={() => demoMode.toggle()}
+                                style={{
+                                    padding: '4px 10px',
+                                    borderRadius: 'var(--radius-sm)',
+                                    border: isDemo ? '1px solid #f59e0b' : '1px solid var(--border-color)',
+                                    background: isDemo ? '#f59e0b22' : 'var(--bg-card)',
+                                    color: isDemo ? '#f59e0b' : 'var(--text-muted)',
+                                    cursor: 'pointer',
+                                    fontSize: '11px',
+                                    fontWeight: 'bold',
+                                    transition: 'all 0.15s'
+                                }}
+                            >
+                                {isDemo ? 'Activo' : 'Inactivo'}
+                            </button>
                         </div>
                     </div>
                 </>

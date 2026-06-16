@@ -1,9 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { useToast } from '../components/Toast';
 import {
-    Users, Plus, X, ArrowLeft, Search, UserPlus, UserMinus, History, Shield, Trash2, Edit2, Star, Calendar, Download, MoreVertical, ClipboardCheck, ChevronDown, HelpCircle
+    Users, Plus, X, ArrowLeft, Search, UserPlus, UserMinus, History, Shield, Trash2, Edit2, Star, Calendar, Download, MoreVertical, ClipboardCheck, ChevronDown, HelpCircle, Power, RotateCcw
 } from 'lucide-react';
 import CountUp from '../components/CountUp';
 import AnimatedCheckbox from '../components/AnimatedCheckbox';
@@ -17,6 +17,11 @@ export default function Brigadas() {
     const [personal, setPersonal] = useState([]);
     const [brigadaMembers, setBrigadaMembers] = useState({});
     const [loading, setLoading] = useState(true);
+    const [brigadaStatusFilter, setBrigadaStatusFilter] = useState('activas');
+    const [mainTab, setMainTab] = useState('brigadas');
+    const [personalSearch, setPersonalSearch] = useState('');
+    const [personalStatusFilter, setPersonalStatusFilter] = useState('activos');
+    const [persAssignMap, setPersAssignMap] = useState({});
     const [search, setSearch] = useState('');
     const [showCreateBrigada, setShowCreateBrigada] = useState(false);
     const [showCreatePersonal, setShowCreatePersonal] = useState(false);
@@ -68,13 +73,16 @@ export default function Brigadas() {
 
     async function loadData() {
         setLoading(true);
-        const [brigRes, persRes, membersRes] = await Promise.all([
+        const [brigRes, persRes, membersRes, assignRes] = await Promise.all([
             supabase.from('brigadas').select('*').order('nombre'),
             supabase.from('personal').select('*').order('nombre'),
             supabase.from('brigada_personal')
                 .select('brigada_id, es_lider, personal(nombre, cargo)')
                 .eq('activo', true)
-                .order('es_lider', { ascending: false })
+                .order('es_lider', { ascending: false }),
+            supabase.from('brigada_personal')
+                .select('personal_id, es_lider, brigadas(nombre, activa)')
+                .eq('activo', true)
         ]);
         setBrigadas(brigRes.data || []);
         setPersonal(persRes.data || []);
@@ -85,21 +93,33 @@ export default function Brigadas() {
             grouped[m.brigada_id].push({ ...m.personal, es_lider: m.es_lider });
         });
         setBrigadaMembers(grouped);
+        // Map personal_id → brigade assignments
+        const assignMap = {};
+        (assignRes.data || []).forEach(a => {
+            if (!assignMap[a.personal_id]) assignMap[a.personal_id] = [];
+            assignMap[a.personal_id].push({ nombre: a.brigadas?.nombre, activa: a.brigadas?.activa, es_lider: a.es_lider });
+        });
+        setPersAssignMap(assignMap);
         setLoading(false);
     }
 
-    async function handleDeleteBrigada(brigada) {
-        if (!confirm(`¿Estás seguro de eliminar la brigada "${brigada.nombre}"?\n\nSe desvinculará todo el personal asignado. Las asistencias del personal NO se eliminarán.\n\nEsta acción no se puede deshacer.`)) return;
+    async function handleDeactivateBrigada(brigada) {
+        if (!confirm(`¿Desactivar la brigada "${brigada.nombre}"?\n\nEl registro histórico y las asistencias del personal se conservarán. El personal podrá ser asignado a otras brigadas.`)) return;
 
-        // Remove all personnel assignments first
-        await supabase.from('brigada_personal').delete().eq('brigada_id', brigada.id);
-        // Remove brigade from projects
-        await supabase.from('proyecto_brigada').delete().eq('brigada_id', brigada.id);
-        // Delete the brigade (brigada_asistencia.brigada_id will be set to NULL via ON DELETE SET NULL)
-        const { error } = await supabase.from('brigadas').delete().eq('id', brigada.id);
+        const { error } = await supabase.from('brigadas').update({ activa: false }).eq('id', brigada.id);
         if (error) { toast(error.message, 'error'); return; }
-        toast('Brigada eliminada correctamente');
+        toast('Brigada desactivada');
         setSelectedBrigada(null);
+        loadData();
+    }
+
+    async function handleReactivateBrigada(brigada) {
+        if (!confirm(`¿Reactivar la brigada "${brigada.nombre}"?`)) return;
+
+        const { error } = await supabase.from('brigadas').update({ activa: true }).eq('id', brigada.id);
+        if (error) { toast(error.message, 'error'); return; }
+        toast('Brigada reactivada');
+        setSelectedBrigada(prev => prev ? { ...prev, activa: true } : prev);
         loadData();
     }
 
@@ -458,15 +478,38 @@ export default function Brigadas() {
         loadBrigadaDetail(selectedBrigada);
     }
 
+    const sortedAsistenciaRecords = useMemo(() =>
+        [...asistenciaRecords].sort((a, b) => a.nombre.localeCompare(b.nombre)),
+        [asistenciaRecords]);
+    const totalAsistenciaPersonal = asistenciaRecords.length;
+    const totalAsistenciaPresentes = useMemo(() =>
+        asistenciaRecords.filter(r => r.asistio).length,
+        [asistenciaRecords]);
+
+    const filteredBrigadas = useMemo(() => brigadas.filter(b => {
+        const matchSearch = b.nombre.toLowerCase().includes(search.toLowerCase());
+        const matchStatus = brigadaStatusFilter === 'todas' ? true
+            : brigadaStatusFilter === 'activas' ? b.activa
+            : !b.activa;
+        return matchSearch && matchStatus;
+    }), [brigadas, search, brigadaStatusFilter]);
+
+    const filteredPersonal = useMemo(() => personal.filter(p => {
+        const q = personalSearch.toLowerCase();
+        const matchSearch = p.nombre.toLowerCase().includes(q) || (p.cargo && p.cargo.toLowerCase().includes(q));
+        const matchStatus = personalStatusFilter === 'todos' ? true
+            : personalStatusFilter === 'activos' ? p.activo
+            : !p.activo;
+        return matchSearch && matchStatus;
+    }), [personal, personalSearch, personalStatusFilter]);
+
     if (loading) return <div className="loading-spinner" />;
 
     // GLOBAL ASISTENCIA VIEW
     if (showGlobalAsistencia) {
-        // Sort records alphabetically
-        const sortedRecords = [...asistenciaRecords].sort((a, b) => a.nombre.localeCompare(b.nombre));
-
-        const totalPersonal = asistenciaRecords.length;
-        const totalPresentes = asistenciaRecords.filter(r => r.asistio).length;
+        const sortedRecords = sortedAsistenciaRecords;
+        const totalPersonal = totalAsistenciaPersonal;
+        const totalPresentes = totalAsistenciaPresentes;
 
         return (
             <div>
@@ -887,24 +930,45 @@ export default function Brigadas() {
                                     
                                     <div className="animated-dropdown-separator" />
                                     
-                                    <button 
-                                        className="animated-dropdown-item" 
-                                        style={{ color: 'var(--accent-red)' }}
-                                        onMouseEnter={(e) => {
-                                            e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
-                                            e.currentTarget.style.transform = 'translateX(2px)';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                            e.currentTarget.style.backgroundColor = 'transparent';
-                                            e.currentTarget.style.transform = 'none';
-                                        }}
-                                        onClick={() => {
-                                            setShowActionsDropdown(false);
-                                            handleDeleteBrigada(selectedBrigada);
-                                        }}
-                                    >
-                                        <Trash2 size={16} /> Eliminar Brigada
-                                    </button>
+                                    {selectedBrigada.activa ? (
+                                        <button
+                                            className="animated-dropdown-item"
+                                            style={{ color: 'var(--accent-red)' }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.1)';
+                                                e.currentTarget.style.transform = 'translateX(2px)';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.backgroundColor = 'transparent';
+                                                e.currentTarget.style.transform = 'none';
+                                            }}
+                                            onClick={() => {
+                                                setShowActionsDropdown(false);
+                                                handleDeactivateBrigada(selectedBrigada);
+                                            }}
+                                        >
+                                            <Power size={16} /> Desactivar Brigada
+                                        </button>
+                                    ) : (
+                                        <button
+                                            className="animated-dropdown-item"
+                                            style={{ color: 'var(--accent-green)' }}
+                                            onMouseEnter={(e) => {
+                                                e.currentTarget.style.backgroundColor = 'rgba(16, 185, 129, 0.1)';
+                                                e.currentTarget.style.transform = 'translateX(2px)';
+                                            }}
+                                            onMouseLeave={(e) => {
+                                                e.currentTarget.style.backgroundColor = 'transparent';
+                                                e.currentTarget.style.transform = 'none';
+                                            }}
+                                            onClick={() => {
+                                                setShowActionsDropdown(false);
+                                                handleReactivateBrigada(selectedBrigada);
+                                            }}
+                                        >
+                                            <RotateCcw size={16} /> Reactivar Brigada
+                                        </button>
+                                    )}
                                 </div>
                             </>
                         )}
@@ -1259,21 +1323,24 @@ export default function Brigadas() {
     }
 
     // BRIGADE LIST VIEW
-    const filteredBrigadas = brigadas.filter(b =>
-        b.nombre.toLowerCase().includes(search.toLowerCase())
-    );
 
     return (
         <div>
             <div className="page-header">
                 <div>
-                    <h2>Brigadas</h2>
+                    <h2>Personal</h2>
                     <p className="page-header-subtitle">Gestión de brigadas y personal técnico</p>
                 </div>
                 <div className="btn-group" style={{ position: 'relative' }}>
-                    <button className="btn btn-primary" onClick={() => setShowCreateBrigada(true)}>
-                        <Plus size={16} /> Nueva Brigada
-                    </button>
+                    {mainTab === 'brigadas' ? (
+                        <button className="btn btn-primary" onClick={() => setShowCreateBrigada(true)}>
+                            <Plus size={16} /> Nueva Brigada
+                        </button>
+                    ) : (
+                        <button className="btn btn-primary" onClick={() => setShowCreatePersonal(true)}>
+                            <UserPlus size={16} /> Registrar Personal
+                        </button>
+                    )}
                     <button
                         className="btn btn-secondary btn-sm"
                         style={{ padding: '6px 8px' }}
@@ -1288,12 +1355,21 @@ export default function Brigadas() {
                             <div className="animated-dropdown">
                                 <div className="animated-dropdown-label">Acciones</div>
                                 <div className="animated-dropdown-separator" />
-                                <button
-                                    className="animated-dropdown-item"
-                                    onClick={() => { setShowListActionsDropdown(false); setShowCreatePersonal(true); }}
-                                >
-                                    <UserPlus size={14} /> Registrar Personal
-                                </button>
+                                {mainTab === 'brigadas' ? (
+                                    <button
+                                        className="animated-dropdown-item"
+                                        onClick={() => { setShowListActionsDropdown(false); setShowCreatePersonal(true); }}
+                                    >
+                                        <UserPlus size={14} /> Registrar Personal
+                                    </button>
+                                ) : (
+                                    <button
+                                        className="animated-dropdown-item"
+                                        onClick={() => { setShowListActionsDropdown(false); setShowCreateBrigada(true); }}
+                                    >
+                                        <Plus size={14} /> Nueva Brigada
+                                    </button>
+                                )}
                                 <button
                                     className="animated-dropdown-item"
                                     onClick={() => { setShowListActionsDropdown(false); setShowGlobalAsistencia(true); }}
@@ -1306,60 +1382,192 @@ export default function Brigadas() {
                 </div>
             </div>
 
-            <div className="search-bar">
-                <Search />
-                <input type="text" placeholder="Buscar brigada..." value={search}
-                    onChange={e => setSearch(e.target.value)} />
+            {/* ── Main tabs ── */}
+            <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', marginBottom: 20 }}>
+                {[
+                    { key: 'brigadas', label: 'Brigadas', icon: <Shield size={14} />, count: brigadas.length },
+                    { key: 'tecnicos', label: 'Técnicos', icon: <Users size={14} />, count: personal.length },
+                ].map(({ key, label, icon, count }) => (
+                    <button key={key} onClick={() => setMainTab(key)} style={{
+                        display: 'flex', alignItems: 'center', gap: 6,
+                        padding: '8px 18px', fontSize: 13,
+                        fontWeight: mainTab === key ? 600 : 400,
+                        color: mainTab === key ? 'var(--accent-blue)' : 'var(--text-muted)',
+                        background: 'transparent', border: 'none', cursor: 'pointer',
+                        borderBottom: mainTab === key ? '2px solid var(--accent-blue)' : '2px solid transparent',
+                        marginBottom: -1, transition: 'color 0.15s, border-color 0.15s',
+                    }}>
+                        {icon} {label}
+                        <span style={{
+                            fontSize: 11, fontWeight: 600, lineHeight: 1,
+                            padding: '2px 7px', borderRadius: 100,
+                            background: mainTab === key ? 'var(--accent-blue-glow)' : 'var(--bg-tertiary)',
+                            color: mainTab === key ? 'var(--accent-blue)' : 'var(--text-muted)',
+                        }}>{count}</span>
+                    </button>
+                ))}
             </div>
 
-            <div className="card-grid">
-                {filteredBrigadas.length > 0 ? filteredBrigadas.map((b, i) => (
-                    <div key={b.id} className="proyecto-card" style={{ animationDelay: `${i * 0.06}s` }} onClick={() => loadBrigadaDetail(b)}>
-                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                            <h4 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                                <Shield size={16} style={{ color: 'var(--accent-cyan)' }} />
-                                {b.nombre}
-                                <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>
-                                    ({brigadaMembers[b.id]?.length || 0} personas)
-                                </span>
-                            </h4>
-                            <span className={`badge ${b.activa ? 'badge-green' : 'badge-red'}`}>
-                                <span className={`status-dot ${b.activa ? 'active' : 'inactive'}`} />
-                                {b.activa ? 'Activa' : 'Inactiva'}
-                            </span>
-                        </div>
-                        {b.descripcion && <p style={{ marginTop: 8 }}>{b.descripcion}</p>}
-                        {brigadaMembers[b.id] && brigadaMembers[b.id].length > 0 ? (
-                            <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
-                                {brigadaMembers[b.id].map((p, i) => (
-                                    <span key={i} style={{
-                                        fontSize: 11, padding: '3px 10px', borderRadius: 100,
-                                        background: p.es_lider ? 'rgba(249, 115, 22, 0.15)' : 'var(--accent-blue-glow)',
-                                        color: p.es_lider ? 'var(--accent-orange)' : 'var(--text-secondary)',
-                                        textShadow: p.es_lider ? '0 0 8px rgba(249, 115, 22, 0.3)' : 'none',
-                                        border: p.es_lider ? '1px solid rgba(249, 115, 22, 0.3)' : '1px solid var(--border-color)',
-                                        display: 'inline-flex', alignItems: 'center', gap: 4,
-                                        width: 'fit-content',
-                                        fontWeight: p.es_lider ? 600 : 400
-                                    }}>
-                                        {p.es_lider ? <Star size={10} fill="currentColor" /> : <Users size={10} />} {p.nombre}{p.cargo ? ` · ${p.cargo}` : ''}
+            {/* ── Brigadas tab ── */}
+            {mainTab === 'brigadas' && (<>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+                    <div className="search-bar" style={{ flex: 1, marginBottom: 0 }}>
+                        <Search />
+                        <input type="text" placeholder="Buscar brigada..." value={search}
+                            onChange={e => setSearch(e.target.value)} />
+                    </div>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                        {[
+                            { key: 'activas', label: 'Activas' },
+                            { key: 'inactivas', label: 'Inactivas' },
+                            { key: 'todas', label: 'Todas' },
+                        ].map(({ key, label }) => (
+                            <button key={key} onClick={() => setBrigadaStatusFilter(key)}
+                                className={`btn btn-sm ${brigadaStatusFilter === key ? 'btn-primary' : 'btn-secondary'}`}
+                                style={{ whiteSpace: 'nowrap' }}>
+                                {label}
+                            </button>
+                        ))}
+                    </div>
+                </div>
+
+                <div className="card-grid">
+                    {filteredBrigadas.length > 0 ? filteredBrigadas.map((b, i) => (
+                        <div key={b.id} className="proyecto-card" style={{ animationDelay: `${i * 0.06}s`, opacity: b.activa ? 1 : 0.55 }} onClick={() => loadBrigadaDetail(b)}>
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
+                                <h4 style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                                    <Shield size={16} style={{ color: 'var(--accent-cyan)' }} />
+                                    {b.nombre}
+                                    <span style={{ fontSize: 11, color: 'var(--text-muted)', fontWeight: 400 }}>
+                                        ({brigadaMembers[b.id]?.length || 0} personas)
                                     </span>
-                                ))}
+                                </h4>
+                                <span className={`badge ${b.activa ? 'badge-green' : 'badge-red'}`}>
+                                    <span className={`status-dot ${b.activa ? 'active' : 'inactive'}`} />
+                                    {b.activa ? 'Activa' : 'Inactiva'}
+                                </span>
                             </div>
-                        ) : (
-                            <p style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
-                                Sin personal asignado
-                            </p>
-                        )}
+                            {b.descripcion && <p style={{ marginTop: 8 }}>{b.descripcion}</p>}
+                            {brigadaMembers[b.id] && brigadaMembers[b.id].length > 0 ? (
+                                <div style={{ marginTop: 12, display: 'flex', flexDirection: 'column', gap: 4 }}>
+                                    {brigadaMembers[b.id].map((p, i) => (
+                                        <span key={i} style={{
+                                            fontSize: 11, padding: '3px 10px', borderRadius: 100,
+                                            background: p.es_lider ? 'rgba(249, 115, 22, 0.15)' : 'var(--accent-blue-glow)',
+                                            color: p.es_lider ? 'var(--accent-orange)' : 'var(--text-secondary)',
+                                            textShadow: p.es_lider ? '0 0 8px rgba(249, 115, 22, 0.3)' : 'none',
+                                            border: p.es_lider ? '1px solid rgba(249, 115, 22, 0.3)' : '1px solid var(--border-color)',
+                                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                                            width: 'fit-content', fontWeight: p.es_lider ? 600 : 400
+                                        }}>
+                                            {p.es_lider ? <Star size={10} fill="currentColor" /> : <Users size={10} />} {p.nombre}{p.cargo ? ` · ${p.cargo}` : ''}
+                                        </span>
+                                    ))}
+                                </div>
+                            ) : (
+                                <p style={{ marginTop: 10, fontSize: 12, color: 'var(--text-muted)', fontStyle: 'italic' }}>
+                                    Sin personal asignado
+                                </p>
+                            )}
+                        </div>
+                    )) : (
+                        <div className="empty-state" style={{ gridColumn: '1 / -1' }}>
+                            <Users size={40} />
+                            <h4>No hay brigadas</h4>
+                            <p>Crea tu primera brigada para asignar personal técnico.</p>
+                        </div>
+                    )}
+                </div>
+            </>)}
+
+            {/* ── Técnicos tab ── */}
+            {mainTab === 'tecnicos' && (<>
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 16 }}>
+                    <div className="search-bar" style={{ flex: 1, marginBottom: 0 }}>
+                        <Search />
+                        <input type="text" placeholder="Buscar técnico por nombre o cargo..."
+                            value={personalSearch} onChange={e => setPersonalSearch(e.target.value)} />
                     </div>
-                )) : (
-                    <div className="empty-state" style={{ gridColumn: '1 / -1' }}>
-                        <Users size={40} />
-                        <h4>No hay brigadas</h4>
-                        <p>Crea tu primera brigada para asignar personal técnico.</p>
+                    <div style={{ display: 'flex', gap: 4, flexShrink: 0 }}>
+                        {[
+                            { key: 'activos', label: 'Activos' },
+                            { key: 'inactivos', label: 'Inactivos' },
+                            { key: 'todos', label: 'Todos' },
+                        ].map(({ key, label }) => (
+                            <button key={key} onClick={() => setPersonalStatusFilter(key)}
+                                className={`btn btn-sm ${personalStatusFilter === key ? 'btn-primary' : 'btn-secondary'}`}
+                                style={{ whiteSpace: 'nowrap' }}>
+                                {label}
+                            </button>
+                        ))}
                     </div>
-                )}
-            </div>
+                </div>
+
+                <div className="card-grid">
+                    {filteredPersonal.length > 0 ? filteredPersonal.map((p) => {
+                        const asignaciones = persAssignMap[p.id] || [];
+                        return (
+                            <div key={p.id} className="proyecto-card" style={{ opacity: p.activo ? 1 : 0.55 }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', gap: 8 }}>
+                                    <div>
+                                        <h4 style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 2 }}>
+                                            <Users size={15} style={{ color: 'var(--accent-blue)', flexShrink: 0 }} />
+                                            {p.nombre}
+                                        </h4>
+                                        {p.cargo && <p style={{ fontSize: 12, color: 'var(--text-muted)', margin: 0 }}>{p.cargo}</p>}
+                                    </div>
+                                    <span className={`badge ${p.activo ? 'badge-green' : 'badge-red'}`} style={{ flexShrink: 0 }}>
+                                        <span className={`status-dot ${p.activo ? 'active' : 'inactive'}`} />
+                                        {p.activo ? 'Activo' : 'Inactivo'}
+                                    </span>
+                                </div>
+
+                                <div style={{ marginTop: 10, display: 'flex', flexWrap: 'wrap', gap: 4 }}>
+                                    {asignaciones.length > 0 ? asignaciones.map((a, j) => (
+                                        <span key={j} style={{
+                                            fontSize: 11, padding: '3px 10px', borderRadius: 100,
+                                            background: a.es_lider ? 'rgba(249,115,22,0.15)' : 'var(--accent-blue-glow)',
+                                            color: a.es_lider ? 'var(--accent-orange)' : 'var(--text-secondary)',
+                                            border: a.es_lider ? '1px solid rgba(249,115,22,0.3)' : '1px solid var(--border-color)',
+                                            display: 'inline-flex', alignItems: 'center', gap: 4,
+                                            fontWeight: a.es_lider ? 600 : 400,
+                                        }}>
+                                            {a.es_lider ? <Star size={10} fill="currentColor" /> : <Shield size={10} />}
+                                            {a.nombre}
+                                        </span>
+                                    )) : (
+                                        <span style={{ fontSize: 11, color: 'var(--text-muted)', fontStyle: 'italic' }}>Sin brigada asignada</span>
+                                    )}
+                                </div>
+
+                                {(p.cedula || p.telefono) && (
+                                    <div style={{ marginTop: 8, display: 'flex', flexWrap: 'wrap', gap: '2px 14px' }}>
+                                        {p.cedula && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>CC {p.cedula}</span>}
+                                        {p.telefono && <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{p.telefono}</span>}
+                                    </div>
+                                )}
+
+                                <button
+                                    className="btn btn-secondary btn-sm"
+                                    style={{ marginTop: 12, width: '100%', fontSize: 12 }}
+                                    onClick={() => {
+                                        setShowEditPersonal(p.id);
+                                        setEditPersForm({ nombre: p.nombre, cedula: p.cedula || '', cargo: p.cargo || '', telefono: p.telefono || '', activo: p.activo });
+                                    }}
+                                >
+                                    <Edit2 size={13} /> Editar
+                                </button>
+                            </div>
+                        );
+                    }) : (
+                        <div className="empty-state" style={{ gridColumn: '1 / -1' }}>
+                            <Users size={40} />
+                            <h4>No hay técnicos</h4>
+                            <p>Registra el personal técnico para asignarlo a brigadas.</p>
+                        </div>
+                    )}
+                </div>
+            </>)}
 
             {/* Modal: Crear Brigada */}
             {showCreateBrigada && (
@@ -1386,6 +1594,77 @@ export default function Brigadas() {
                                 <div className="form-actions">
                                     <button type="button" className="btn btn-secondary" onClick={() => setShowCreateBrigada(false)}>Cancelar</button>
                                     <button type="submit" className="btn btn-primary">Crear Brigada</button>
+                                </div>
+                            </form>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* Modal: Editar Personal (from list view) */}
+            {showEditPersonal && !selectedBrigada && (
+                <div className="modal-overlay" onClick={() => setShowEditPersonal(null)}>
+                    <div className="modal" onClick={e => e.stopPropagation()}>
+                        <div className="modal-header">
+                            <h3>Editar Personal</h3>
+                            <button className="modal-close" onClick={() => setShowEditPersonal(null)}><X size={18} /></button>
+                        </div>
+                        <div className="modal-body">
+                            <form onSubmit={handleEditPersonalDetails}>
+                                <div className="form-group">
+                                    <label>Nombre completo *</label>
+                                    <input className="form-input" required value={editPersForm.nombre}
+                                        onChange={e => setEditPersForm({ ...editPersForm, nombre: e.target.value })} />
+                                </div>
+                                <div className="form-row">
+                                    <div className="form-group">
+                                        <label>Cédula</label>
+                                        <input className="form-input" value={editPersForm.cedula}
+                                            onChange={e => setEditPersForm({ ...editPersForm, cedula: e.target.value })} />
+                                    </div>
+                                    <div className="form-group">
+                                        <label>Cargo</label>
+                                        <input className="form-input" value={editPersForm.cargo}
+                                            onChange={e => setEditPersForm({ ...editPersForm, cargo: e.target.value })} />
+                                    </div>
+                                </div>
+                                <div className="form-group">
+                                    <label>Teléfono</label>
+                                    <input className="form-input" value={editPersForm.telefono}
+                                        onChange={e => setEditPersForm({ ...editPersForm, telefono: e.target.value })} />
+                                </div>
+                                <div style={{
+                                    padding: '12px 16px', borderRadius: 'var(--radius-md)', marginBottom: 16,
+                                    border: `1px solid ${editPersForm.activo === false ? 'rgba(239, 68, 68, 0.3)' : 'var(--border-color)'}`,
+                                    background: editPersForm.activo === false ? 'rgba(239, 68, 68, 0.05)' : 'transparent',
+                                }}>
+                                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                                        <div>
+                                            <label style={{ fontWeight: 600, fontSize: 13, color: editPersForm.activo === false ? 'var(--accent-red)' : 'var(--text-primary)', marginBottom: 2, display: 'block' }}>
+                                                Estado del personal
+                                            </label>
+                                            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>
+                                                {editPersForm.activo === false
+                                                    ? 'Deshabilitado — no aparecerá en asistencia ni brigadas'
+                                                    : 'Habilitado — activo en el sistema'}
+                                            </span>
+                                        </div>
+                                        <button type="button"
+                                            onClick={() => setEditPersForm({ ...editPersForm, activo: editPersForm.activo === false ? true : false })}
+                                            className={`btn btn-sm ${editPersForm.activo === false ? 'btn-danger' : 'btn-secondary'}`}
+                                            style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+                                            {editPersForm.activo === false ? 'Deshabilitado' : 'Habilitado'}
+                                        </button>
+                                    </div>
+                                    {editPersForm.activo === false && (
+                                        <p style={{ fontSize: 11, color: 'var(--accent-red)', marginTop: 8, lineHeight: 1.4 }}>
+                                            ⚠ Al guardar, esta persona será removida de su brigada actual y no aparecerá en asistencia ni nómina.
+                                        </p>
+                                    )}
+                                </div>
+                                <div className="form-actions">
+                                    <button type="button" className="btn btn-secondary" onClick={() => setShowEditPersonal(null)}>Cancelar</button>
+                                    <button type="submit" className="btn btn-primary">Guardar Cambios</button>
                                 </div>
                             </form>
                         </div>

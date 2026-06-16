@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { useToast } from '../components/Toast';
@@ -31,6 +32,8 @@ export default function Inventario() {
     const [newMaterial, setNewMaterial] = useState({ nombre: '', codigo: '', unidad: 'unidad' });
     const [entradaForm, setEntradaForm] = useState({ material_id: '', cantidad: '', descripcion: '' });
     const [bulkRows, setBulkRows] = useState([{ material_id: '', cantidad: '', search: '' }]);
+    const [bulkFocused, setBulkFocused] = useState(null);
+    const [bulkDropdownPos, setBulkDropdownPos] = useState({ top: 0, left: 0, width: 0 });
 
     useEffect(() => {
         loadData();
@@ -272,10 +275,40 @@ export default function Inventario() {
         loadData();
     }
 
-    const filteredMateriales = materiales.filter(m =>
-        m.nombre.toLowerCase().includes(search.toLowerCase()) ||
-        (m.codigo && m.codigo.toLowerCase().includes(search.toLowerCase()))
-    );
+    const filteredMateriales = useMemo(() =>
+        materiales.filter(m =>
+            m.nombre.toLowerCase().includes(search.toLowerCase()) ||
+            (m.codigo && m.codigo.toLowerCase().includes(search.toLowerCase()))
+        ), [materiales, search]);
+
+    // Pre-compute asignado-consumido per material (O(n) instead of O(n²) per row)
+    const asignadoByMaterial = useMemo(() => {
+        const piTotals = {};
+        for (const pi of proyectoInventario) {
+            piTotals[pi.material_id] = (piTotals[pi.material_id] || 0) + pi.cantidad;
+        }
+        const consumoTotals = {};
+        for (const c of consumos) {
+            if (c.tipo === 'consumo') consumoTotals[c.material_id] = (consumoTotals[c.material_id] || 0) + c.cantidad;
+        }
+        const result = {};
+        for (const [id, asignado] of Object.entries(piTotals)) {
+            result[id] = Math.max(0, asignado - (consumoTotals[id] || 0));
+        }
+        return result;
+    }, [proyectoInventario, consumos]);
+
+    const filteredMovimientos = useMemo(() => movimientos.filter(m => {
+        const term = searchMovimientos.toLowerCase();
+        return (
+            (m.materiales?.nombre || '').toLowerCase().includes(term) ||
+            (m.descripcion || '').toLowerCase().includes(term) ||
+            (m.proyectos?.nombre || '').toLowerCase().includes(term) ||
+            (m.brigadas?.nombre || '').toLowerCase().includes(term) ||
+            (m.tipo || '').toLowerCase().includes(term) ||
+            new Date(m.created_at).toLocaleDateString('es-ES').includes(term)
+        );
+    }), [movimientos, searchMovimientos]);
 
     if (loading) return <div className="loading-spinner" />;
 
@@ -427,12 +460,7 @@ export default function Inventario() {
                                 {filteredMateriales.length > 0 ? filteredMateriales.map(m => {
                                     const invData = m.inventario;
                                     const stockAlmacen = Array.isArray(invData) ? (invData[0]?.cantidad ?? 0) : (invData?.cantidad ?? 0);
-
-                                    const pInv = proyectoInventario.filter(pi => pi.material_id === m.id);
-                                    const totalAsignado = pInv.reduce((s, pi) => s + pi.cantidad, 0);
-                                    const matConsumos = consumos.filter(c => c.material_id === m.id && c.tipo === 'consumo');
-                                    const totalConsumido = matConsumos.reduce((s, c) => s + c.cantidad, 0);
-                                    const asignadoProyecto = Math.max(0, totalAsignado - totalConsumido);
+                                    const asignadoProyecto = asignadoByMaterial[m.id] ?? 0;
                                     const total = stockAlmacen + asignadoProyecto;
 
                                     return (
@@ -477,18 +505,6 @@ export default function Inventario() {
             )}
 
             {activeTab === 'movimientos' && (() => {
-                const filteredMovimientos = movimientos.filter(m => {
-                    const term = searchMovimientos.toLowerCase();
-                    return (
-                        (m.materiales?.nombre || '').toLowerCase().includes(term) ||
-                        (m.descripcion || '').toLowerCase().includes(term) ||
-                        (m.proyectos?.nombre || '').toLowerCase().includes(term) ||
-                        (m.brigadas?.nombre || '').toLowerCase().includes(term) ||
-                        (m.tipo || '').toLowerCase().includes(term) ||
-                        new Date(m.created_at).toLocaleDateString('es-ES').includes(term)
-                    );
-                });
-
                 return (
                     <>
                         <div style={{ display: 'flex', gap: 16, marginBottom: 16, alignItems: 'center' }}>
@@ -713,6 +729,8 @@ export default function Inventario() {
                                         : available;
                                     const selectedMat = materiales.find(m => m.id === row.material_id);
 
+                                    const showDropdown = bulkFocused === i && !row.material_id;
+
                                     return (
                                         <div className="bulk-row" key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 100px 36px', gap: 8, marginBottom: 8, alignItems: 'start' }}>
                                             <div style={{ position: 'relative' }}>
@@ -726,7 +744,10 @@ export default function Inventario() {
                                                         nr[i].material_id = '';
                                                         setBulkRows(nr);
                                                     }}
-                                                    onFocus={() => {
+                                                    onFocus={e => {
+                                                        const rect = e.currentTarget.getBoundingClientRect();
+                                                        setBulkDropdownPos({ top: rect.bottom + 4, left: rect.left, width: rect.width });
+                                                        setBulkFocused(i);
                                                         if (row.material_id) {
                                                             const nr = [...bulkRows];
                                                             nr[i].search = '';
@@ -734,15 +755,22 @@ export default function Inventario() {
                                                             setBulkRows(nr);
                                                         }
                                                     }}
+                                                    onBlur={() => setTimeout(() => setBulkFocused(null), 150)}
                                                     autoComplete="off"
                                                 />
-                                                {!row.material_id && (row.search !== undefined) && document.activeElement?.closest('.bulk-row') === document.querySelectorAll('.bulk-row')[i] ? null : null}
-                                                {!row.material_id && (
+                                                {showDropdown && createPortal(
                                                     <div style={{
-                                                        position: 'absolute', top: '100%', left: 0, right: 0, zIndex: 50,
-                                                        background: 'var(--bg-secondary)', border: '1px solid var(--border-color)',
-                                                        borderRadius: 'var(--radius-sm)', maxHeight: 180, overflowY: 'auto',
-                                                        boxShadow: 'var(--shadow-lg)', display: row.search ? 'block' : 'none'
+                                                        position: 'fixed',
+                                                        top: bulkDropdownPos.top,
+                                                        left: bulkDropdownPos.left,
+                                                        width: bulkDropdownPos.width,
+                                                        zIndex: 99999,
+                                                        background: 'var(--bg-secondary)',
+                                                        border: '1px solid var(--border-color)',
+                                                        borderRadius: 'var(--radius-sm)',
+                                                        maxHeight: 220,
+                                                        overflowY: 'auto',
+                                                        boxShadow: 'var(--shadow-lg)'
                                                     }}>
                                                         {filtered.length > 0 ? filtered.map(m => (
                                                             <div key={m.id}
@@ -753,8 +781,9 @@ export default function Inventario() {
                                                                     nr[i].material_id = m.id;
                                                                     nr[i].search = '';
                                                                     setBulkRows(nr);
+                                                                    setBulkFocused(null);
                                                                 }}
-                                                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-hover)'}
+                                                                onMouseEnter={e => e.currentTarget.style.background = 'var(--bg-card-hover)'}
                                                                 onMouseLeave={e => e.currentTarget.style.background = 'transparent'}
                                                             >
                                                                 {m.codigo ? <span style={{ color: 'var(--accent-blue)', marginRight: 6 }}>[{m.codigo}]</span> : null}
@@ -763,7 +792,8 @@ export default function Inventario() {
                                                         )) : (
                                                             <div style={{ padding: '8px 12px', fontSize: 13, color: 'var(--text-muted)', fontStyle: 'italic' }}>Sin resultados</div>
                                                         )}
-                                                    </div>
+                                                    </div>,
+                                                    document.body
                                                 )}
                                             </div>
                                             <input className="form-input" type="number" min="0.01" step="0.01"

@@ -7,6 +7,11 @@ import StarsBackground from '../components/StarsBackground';
 import ColorBends from '../components/ColorBends';
 
 export default function Notas() {
+    useEffect(() => {
+        document.body.classList.add('page-notas');
+        return () => document.body.classList.remove('page-notas');
+    }, []);
+
     const toast = useToast();
     const [notas, setNotas] = useState([]);
     const [loading, setLoading] = useState(true);

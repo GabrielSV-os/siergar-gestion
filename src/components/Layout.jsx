@@ -1,11 +1,24 @@
 import { useState, useEffect } from 'react';
-import { NavLink, Outlet } from 'react-router-dom';
+import { NavLink, Outlet, useLocation } from 'react-router-dom';
 import { Package, FolderKanban, Users, LayoutDashboard, BookOpen, StickyNote, Hammer, Database, Menu, X } from 'lucide-react';
 import { supabase } from '../lib/supabase';
+import Grainient from './Grainient';
+import Aurora from './Aurora';
 
 export default function Layout() {
+    const location = useLocation();
+    const isNotas = location.pathname === '/notas';
     const [dbSize, setDbSize] = useState(0);
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [isLight, setIsLight] = useState(() => (localStorage.getItem('siergar-theme') || 'dark') === 'light');
+
+    useEffect(() => {
+        const observer = new MutationObserver(() => {
+            setIsLight(document.documentElement.getAttribute('data-theme') === 'light');
+        });
+        observer.observe(document.documentElement, { attributes: true, attributeFilter: ['data-theme'] });
+        return () => observer.disconnect();
+    }, []);
 
     useEffect(() => {
         async function fetchSize() {
@@ -25,6 +38,35 @@ export default function Layout() {
 
     return (
         <div className="app-layout">
+            {!isNotas && <div style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
+                {isLight
+                    ? <Grainient
+                        color1="#e0e0e0"
+                        color2="#94a3b8"
+                        color3="#ffffff"
+                        timeSpeed={0.25}
+                        colorBalance={0}
+                        warpStrength={1}
+                        warpFrequency={5}
+                        warpSpeed={2}
+                        warpAmplitude={50}
+                        blendAngle={0}
+                        blendSoftness={0.05}
+                        rotationAmount={500}
+                        noiseScale={2}
+                        grainAmount={0.1}
+                        grainScale={2}
+                        grainAnimated={false}
+                        contrast={1.5}
+                        gamma={1}
+                        saturation={1}
+                        centerX={0}
+                        centerY={0}
+                        zoom={0.9}
+                      />
+                    : <Aurora colorStops={["#6b7280", "#e5e7eb", "#9ca3af"]} amplitude={1.0} blend={0.5} speed={3.0} />
+                }
+            </div>}
             {/* Mobile hamburger button */}
             <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
                 {sidebarOpen ? <X size={22} /> : <Menu size={22} />}
@@ -55,9 +97,9 @@ export default function Layout() {
                         <FolderKanban />
                         <span>Proyectos</span>
                     </NavLink>
-                    <NavLink to="/brigadas" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
+                    <NavLink to="/personal" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <Users />
-                        <span>Brigadas</span>
+                        <span>Personal</span>
                     </NavLink>
                     <NavLink to="/fabricacion" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <Hammer />
@@ -95,7 +137,9 @@ export default function Layout() {
                 </nav>
             </aside>
             <main className="main-content">
-                <Outlet />
+                <div style={{ position: 'relative', zIndex: 1 }}>
+                    <Outlet />
+                </div>
             </main>
         </div>
     );
