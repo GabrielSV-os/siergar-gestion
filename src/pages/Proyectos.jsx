@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { useToast } from '../components/Toast';
@@ -1254,13 +1254,12 @@ export default function Proyectos() {
     }
 
     // Apply filters to consumos
-    const filteredConsumos = consumos.filter(c => {
-        if (filterBrigada && c.brigada_id !== filterBrigada) return false;
-        return true;
-    });
+    const filteredConsumos = useMemo(() =>
+        consumos.filter(c => !filterBrigada || c.brigada_id === filterBrigada),
+        [consumos, filterBrigada]);
 
     // Calculate brigade inventory (asignado - consumido)
-    function calcBrigadeInventory() {
+    const brigadeInventory = useMemo(() => {
         const inv = {};
         const filtered = filterBrigada ? consumos.filter(c => c.brigada_id === filterBrigada) : consumos;
         filtered.forEach(c => {
@@ -1270,22 +1269,23 @@ export default function Proyectos() {
             else if (c.tipo === 'consumo') inv[key].consumido += c.cantidad;
         });
         return Object.values(inv).filter(i => i.asignado > 0);
-    }
+    }, [consumos, filterBrigada]);
 
     // Calculate per-hour estimates from daily consumption records with real hours (Not grouped)
-    function calcPerHourEstimates() {
-        const consumosDiarios = filteredConsumos.filter(c => c.tipo === 'consumo');
-        return consumosDiarios.map(c => {
-            const name = c.materiales?.nombre || 'Desconocido';
-            return {
-                id: c.id,
-                name,
-                date: c.fecha || c.created_at?.split('T')[0],
-                total: c.cantidad,
-                hours: c.horas || 0,
-                perHour: c.horas > 0 ? (c.cantidad / c.horas).toFixed(2) : '—'
-            };
-        });
+    const perHourEstimates = useMemo(() => {
+        return filteredConsumos.filter(c => c.tipo === 'consumo').map(c => ({
+            id: c.id,
+            name: c.materiales?.nombre || 'Desconocido',
+            date: c.fecha || c.created_at?.split('T')[0],
+            total: c.cantidad,
+            hours: c.horas || 0,
+            perHour: c.horas > 0 ? (c.cantidad / c.horas).toFixed(2) : '—'
+        }));
+    }, [filteredConsumos]);
+
+    // Legacy wrappers kept for any remaining call-sites
+    function calcBrigadeInventory() { return brigadeInventory; }
+    function calcPerHourEstimates() { return perHourEstimates;
     }
 
     const estadoColor = { activo: 'badge-green', completado: 'badge-blue', cancelado: 'badge-red', pausado: 'badge-orange' };
@@ -1308,7 +1308,7 @@ export default function Proyectos() {
 
     // DETAIL VIEW
     if (selectedProyecto) {
-        const estimates = calcPerHourEstimates();
+        const estimates = perHourEstimates;
         return (
             <div>
                 <div className="detail-header">
@@ -1468,7 +1468,7 @@ export default function Proyectos() {
                                 <p style={{ color: 'var(--text-secondary)', fontSize: 14 }}>{selectedProyecto.descripcion}</p>
                             </div>
                         )}
-                        <div style={{ display: 'grid', gridTemplateColumns: 'auto auto auto 1fr', gap: 12 }}>
+                        <div className="proyecto-stats-grid">
                             <div className="stat-card">
                                 <div className="stat-icon blue"><Calendar size={20} /></div>
                                 <div className="stat-info">
@@ -1939,7 +1939,7 @@ export default function Proyectos() {
                                     };
 
                                     return (
-                                        <div id="chart-inventario-consumo" style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 24, padding: '8px 0 16px' }}>
+                                        <div id="chart-inventario-consumo" className="chart-donut-grid">
                                             <div>
                                                 <p style={{ textAlign: 'center', fontSize: 12, color: mutedColor, marginBottom: 8, fontWeight: 600, textTransform: 'uppercase', letterSpacing: 0.5 }}>En Inventario</p>
                                                 <div style={{ height: 220 }}>
@@ -2276,10 +2276,10 @@ export default function Proyectos() {
                     <div>
                         <h2 style={{ fontSize: 18, fontWeight: 700, color: 'var(--text-primary)', marginBottom: 16 }}>Cotización</h2>
                         <div className="card" style={{ marginBottom: 20 }}>
-                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                                <div>
+                            <div className="cotizacion-header">
+                                <div style={{ flex: 1, minWidth: 0 }}>
                                     <h3 style={{ color: 'var(--text-primary)', marginBottom: 8 }}>Cabecera de Cotización</h3>
-                                    <div style={{ display: 'grid', gridTemplateColumns: 'minmax(200px, 1fr) minmax(200px, 1fr)', gap: '12px 24px', fontSize: 13, color: 'var(--text-secondary)' }}>
+                                    <div className="cotizacion-info-grid">
                                         <div><strong>Cliente:</strong> Camusat Dominicana</div>
                                         <div><strong>RNC:</strong> 1-23-00159-2</div>
                                         <div style={{ gridColumn: '1 / -1' }}><strong>Dirección:</strong> Carretera Duarte Vieja N° 110, Santo Domingo, Rep. Dom.</div>
@@ -2287,7 +2287,7 @@ export default function Proyectos() {
                                         <div><strong>Tipo trabajo:</strong> Fibra óptica</div>
                                     </div>
                                 </div>
-                                <button className="btn btn-primary" onClick={generateQuotePDF}>
+                                <button className="btn btn-primary" style={{ flexShrink: 0 }} onClick={generateQuotePDF}>
                                     <Download size={16} /> Exportar PDF
                                 </button>
                             </div>
@@ -2296,12 +2296,12 @@ export default function Proyectos() {
                         <div className="card">
                             <div className="card-header" style={{ marginBottom: 16 }}>
                                 <h3>Ítems de Cotización</h3>
-                                <div style={{ display: 'flex', gap: 8 }}>
+                                <div style={{ display: 'flex', gap: 8, flex: 1 }}>
                                     <input
                                         list="cotizacion-opciones"
                                         className="form-input"
                                         placeholder="+ Buscar en catálogo..."
-                                        style={{ minWidth: 350 }}
+                                        style={{ flex: 1, minWidth: 0 }}
                                         onChange={(e) => {
                                             const val = e.target.value;
                                             const item = cotizacionCatalogo.find(c => `${c.codigo} - ${c.descripcion}` === val);

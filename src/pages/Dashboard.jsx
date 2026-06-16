@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../lib/supabase';
 import { useRealtime } from '../lib/useRealtime';
 import { Package, FolderKanban, Users, TrendingDown, Info } from 'lucide-react';
@@ -156,6 +156,13 @@ export default function Dashboard() {
         }
     }
 
+    const cssTextSecondary = useMemo(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1',
+        [themeTrigger]);
+    const cssTextMuted = useMemo(() =>
+        getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8',
+        [themeTrigger]);
+
     if (loading) return <div className="loading-spinner" />;
 
     return (
@@ -261,7 +268,7 @@ export default function Dashboard() {
                             }}
                             options={{
                                 plugins: {
-                                    legend: { position: 'right', labels: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1', font: { family: 'Inter' } } },
+                                    legend: { position: 'right', labels: { color: cssTextSecondary, font: { family: 'Inter' } } },
                                     tooltip: { backgroundColor: 'rgba(0,0,0,0.85)', padding: 12, cornerRadius: 8, titleFont: { family: 'Inter' }, bodyFont: { family: 'Inter' } }
                                 },
                                 maintainAspectRatio: false,
@@ -304,7 +311,7 @@ export default function Dashboard() {
                                 responsive: true,
                                 maintainAspectRatio: false,
                                 plugins: {
-                                    legend: { position: 'top', labels: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1', font: { family: 'Inter' } } },
+                                    legend: { position: 'top', labels: { color: cssTextSecondary, font: { family: 'Inter' } } },
                                     tooltip: { 
                                         backgroundColor: 'rgba(0,0,0,0.85)', 
                                         padding: 12, 
@@ -323,12 +330,12 @@ export default function Dashboard() {
                                 scales: {
                                     x: {
                                         grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false },
-                                        ticks: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8', font: { family: 'Inter' } }
+                                        ticks: { color: cssTextMuted, font: { family: 'Inter' } }
                                     },
                                     y: {
                                         beginAtZero: true,
                                         grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false },
-                                        ticks: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8', font: { family: 'Inter' } }
+                                        ticks: { color: cssTextMuted, font: { family: 'Inter' } }
                                     }
                                 }
                             }}
@@ -385,19 +392,19 @@ export default function Dashboard() {
                             maintainAspectRatio: false,
                             interaction: { mode: 'index', intersect: false },
                             plugins: {
-                                legend: { position: 'top', labels: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-secondary').trim() || '#cbd5e1', font: { family: 'Inter', size: 12 } } },
+                                legend: { position: 'top', labels: { color: cssTextSecondary, font: { family: 'Inter', size: 12 } } },
                                 tooltip: { backgroundColor: 'rgba(0,0,0,0.85)', padding: 12, cornerRadius: 8, titleFont: { family: 'Inter' }, bodyFont: { family: 'Inter' } }
                             },
                             scales: {
                                 x: {
                                     grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false },
-                                    ticks: { color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8', font: { family: 'Inter' } }
+                                    ticks: { color: cssTextMuted, font: { family: 'Inter' } }
                                 },
                                 y: {
                                     beginAtZero: true,
                                     grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false },
                                     ticks: {
-                                        color: getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8', font: { family: 'Inter' },
+                                        color: cssTextMuted, font: { family: 'Inter' },
                                         callback: function (value) {
                                             return '$' + value.toLocaleString();
                                         }
