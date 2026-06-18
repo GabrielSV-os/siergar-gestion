@@ -2,18 +2,45 @@ import { BookOpen, Package, FolderKanban, Users, LayoutDashboard, ChevronRight, 
 
 const changelog = [
     {
-        version: 'v2.3',
-        date: '15 Jun 2026',
+        version: 'v2.4',
+        date: '17 Jun 2026',
         color: 'var(--accent-primary)',
         groups: [
             {
                 icon: 'sparkle',
                 label: 'Novedades',
                 items: [
-                    'Fondo animado remodelado: modo oscuro con Aurora en tonos grises/blancos, modo claro con efecto Grainient con textura grain.',
-                    'El fondo ahora es fijo (position: fixed) — ya no se corta al hacer scroll en páginas largas.',
-                    'Velocidad de animación del fondo en modo oscuro aumentada.',
+                    'Diseño completamente responsivo: tablas, tarjetas, botones y formularios adaptados a cualquier pantalla — móvil (iPhone SE), tablet y escritorio.',
+                    'Fondo animado unificado: ambos temas usan Grainient — oscuro en tonos negro/gris, claro en tonos blanco/gris.',
+                ]
+            },
+            {
+                icon: 'zap',
+                label: 'Rendimiento',
+                items: [
+                    'Gráficas del Dashboard memoizadas: Chart.js ya no re-anima en cada render, solo cuando cambian los datos o el tema.',
+                    'Fondo WebGL: instancia única para ambos temas — cambiar modo claro/oscuro ya no destruye ni recrea el contexto WebGL.',
+                    'Fondo WebGL: resolución fija a 1× — en pantallas HiDPI el shader ejecutaba 4× los píxeles sin diferencia visual perceptible.',
+                    'Fondo WebGL: animación capada a 24fps — la transición es tan lenta que es indistinguible de 60fps.',
+                    'Proyectos: búsqueda de materiales O(n²) → O(1) con Map; filtro de brigadas disponibles O(n²) → O(n) con Set.',
+                    'Brigadas: cálculo de personal disponible O(n²) → O(n) con Map/Set.',
+                    'Build con code splitting: react, Chart.js, jsPDF y Supabase en bundles separados para caché independiente del navegador.',
+                ]
+            }
+        ]
+    },
+    {
+        version: 'v2.3',
+        date: '15 Jun 2026',
+        color: '#64748b',
+        groups: [
+            {
+                icon: 'sparkle',
+                label: 'Novedades',
+                items: [
+                    'Fondo animado remodelado con posición fija (no se corta al hacer scroll).',
                     'El fondo animado se oculta en la página de Notas para mayor comodidad de lectura.',
+                    'Modo Prueba: actívalo desde el panel de Apariencia (engranaje) para explorar el sistema sin guardar ningún cambio en la base de datos. Un banner naranja aparece en la parte superior mientras está activo.',
                 ]
             },
             {
@@ -22,8 +49,6 @@ const changelog = [
                 items: [
                     'Cálculos de stock en Inventario optimizados de O(n²) a O(n) con mapa de pre-cómputo.',
                     'useMemo aplicado en Inventario, Brigadas, Proyectos y Dashboard para evitar recálculos innecesarios.',
-                    'Aurora: se pausa automáticamente al cambiar de pestaña o cuando el componente sale de pantalla.',
-                    'Aurora: caché de objetos Color para evitar allocations por cuadro de animación.',
                 ]
             },
             {
@@ -107,6 +132,11 @@ const changelog = [
                     'Gráficas de dona para "Inventario vs Consumo de Brigadas" (reemplazó la gráfica de barras).',
                     'Menú desplegable animado en la lista de Brigadas (Registrar Personal / Pasar Asistencia).',
                     'Solo se muestran los 5 materiales más consumidos en la tabla de detalle de proyectos.',
+                    'Pase de asistencia global: vista unificada y alfabética de todo el personal activo sin importar la brigada.',
+                    'Soporte de "Medio día": marca asistencia parcial con confirmación y indicadores visuales en naranja.',
+                    'Deshabilitar/habilitar personal desde el modal de edición — al deshabilitarlo se retira automáticamente de su brigada.',
+                    'Filtro de personal disponible al agregar a una brigada: excluye automáticamente a quienes ya están asignados a otra brigada activa.',
+                    'Filas del reporte de asistencia (nómina) colapsables: ocultas por defecto, se expanden al hacer clic.',
                 ]
             },
             {
@@ -261,6 +291,7 @@ const sections = [
                     'Una persona no puede estar asignada a más de una brigada activa al mismo tiempo.',
                     'Puedes editar la información del personal en cualquier momento (ícono Editar).',
                     'Puedes remover personal de la brigada guardando un motivo de salida.',
+                    'Deshabilita o rehabilita personal desde el ícono de edición — al deshabilitar se retira automáticamente de la brigada.',
                     'El personal activo se muestra en la tarjeta de cada brigada.'
                 ]
             },
@@ -273,7 +304,10 @@ const sections = [
             {
                 subtitle: 'Control de Asistencia (Nómina)', items: [
                     'Toma lista del personal día a día marcando sus asistencias y ausencias.',
-                    'Visualiza el reporte detallado mensual o semanal y calcúlales el porcentaje de asistencia general.',
+                    'Soporte de medio día: marca asistencia parcial con confirmación e indicador visual en naranja.',
+                    'Vista de asistencia global: pase de lista unificado y alfabético de todo el personal activo, sin importar la brigada.',
+                    'Visualiza el reporte detallado mensual o semanal y calcula el porcentaje de asistencia de cada empleado.',
+                    'Las filas del reporte están colapsadas por defecto — haz clic para expandir el detalle de cada persona.',
                     'Exporta el reporte completo en formato PDF para el control administrativo de la nómina.'
                 ]
             }
@@ -352,10 +386,10 @@ export default function Manual() {
                 </div>
             </div>
 
-            <div style={{ display: 'flex', gap: 24, alignItems: 'flex-start' }}>
+            <div className="manual-layout">
 
                 {/* LEFT — module docs */}
-                <div style={{ display: 'flex', flexDirection: 'column', gap: 24, flex: '1 1 0', minWidth: 0 }}>
+                <div className="manual-main">
                     {sections.map((section, i) => (
                         <div key={i} className="card" style={{ borderLeft: `4px solid ${section.color}` }}>
                             <div className="card-header" style={{ borderBottom: '1px solid var(--border-color)', paddingBottom: 12, marginBottom: 12 }}>
@@ -414,12 +448,16 @@ export default function Manual() {
                                 <ChevronRight size={14} style={{ marginTop: 2, flexShrink: 0 }} />
                                 <span>Revisa en el menú la <strong>barra de Almacenamiento</strong> para asegurarte de que tu base de datos (límite 500 MB) tenga espacio suficiente.</span>
                             </div>
+                            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
+                                <ChevronRight size={14} style={{ marginTop: 2, flexShrink: 0 }} />
+                                <span>El sistema es <strong>totalmente responsivo</strong> — puedes usarlo desde móvil, tablet o escritorio sin perder funcionalidad.</span>
+                            </div>
                         </div>
                     </div>
                 </div>
 
                 {/* RIGHT — changelog (sticky) */}
-                <div style={{ width: 320, flexShrink: 0, position: 'sticky', top: 24 }}>
+                <div className="manual-changelog">
                     <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 16 }}>
                         <History size={18} style={{ color: 'var(--text-muted)' }} />
                         <h3 style={{ margin: 0, fontSize: 15 }}>Notas de Actualización</h3>

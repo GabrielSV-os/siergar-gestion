@@ -39,33 +39,30 @@ export default function Layout() {
     return (
         <div className="app-layout">
             {!isNotas && <div style={{ position: 'fixed', inset: 0, zIndex: 0, pointerEvents: 'none' }}>
-                {isLight
-                    ? <Grainient
-                        color1="#e0e0e0"
-                        color2="#94a3b8"
-                        color3="#ffffff"
-                        timeSpeed={0.25}
-                        colorBalance={0}
-                        warpStrength={1}
-                        warpFrequency={5}
-                        warpSpeed={2}
-                        warpAmplitude={50}
-                        blendAngle={0}
-                        blendSoftness={0.05}
-                        rotationAmount={500}
-                        noiseScale={2}
-                        grainAmount={0.1}
-                        grainScale={2}
-                        grainAnimated={false}
-                        contrast={1.5}
-                        gamma={1}
-                        saturation={1}
-                        centerX={0}
-                        centerY={0}
-                        zoom={0.9}
-                      />
-                    : <Aurora colorStops={["#6b7280", "#e5e7eb", "#9ca3af"]} amplitude={1.0} blend={0.5} speed={3.0} />
-                }
+                <Grainient
+                    color1={isLight ? '#e0e0e0' : '#000000'}
+                    color2={isLight ? '#94a3b8' : '#5f656e'}
+                    color3={isLight ? '#ffffff' : '#000000'}
+                    timeSpeed={0.25}
+                    colorBalance={0}
+                    warpStrength={1}
+                    warpFrequency={5}
+                    warpSpeed={2}
+                    warpAmplitude={50}
+                    blendAngle={0}
+                    blendSoftness={0.05}
+                    rotationAmount={500}
+                    noiseScale={2}
+                    grainAmount={0.1}
+                    grainScale={2}
+                    grainAnimated={false}
+                    contrast={1.5}
+                    gamma={1}
+                    saturation={1}
+                    centerX={0}
+                    centerY={0}
+                    zoom={0.9}
+                />
             </div>}
             {/* Mobile hamburger button */}
             <button className="mobile-menu-btn" onClick={() => setSidebarOpen(!sidebarOpen)}>
