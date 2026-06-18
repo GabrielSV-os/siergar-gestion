@@ -163,6 +163,66 @@ export default function Dashboard() {
         getComputedStyle(document.documentElement).getPropertyValue('--text-muted').trim() || '#94a3b8',
         [themeTrigger]);
 
+    const doughnutChartData = useMemo(() => ({
+        labels: ['Activos', 'Retrasados', 'Pausados', 'Completados', 'Cancelados'],
+        datasets: [{ data: chartData.proyectosStatus || [0, 0, 0, 0, 0], backgroundColor: ['#10b981', '#f97316', '#eab308', '#3b82f6', '#ef4444'], borderWidth: 0, hoverOffset: 4 }]
+    }), [chartData.proyectosStatus]);
+
+    const doughnutOptions = useMemo(() => ({
+        plugins: {
+            legend: { position: 'right', labels: { color: cssTextSecondary, font: { family: 'Inter' } } },
+            tooltip: { backgroundColor: 'rgba(0,0,0,0.85)', padding: 12, cornerRadius: 8, titleFont: { family: 'Inter' }, bodyFont: { family: 'Inter' } }
+        },
+        maintainAspectRatio: false,
+        cutout: '70%'
+    }), [cssTextSecondary]);
+
+    const barChartData = useMemo(() => ({
+        labels: chartData.topMateriales.map(m => m.nombre.length > 18 ? m.nombre.substring(0, 18) + '...' : m.nombre),
+        datasets: [
+            { label: 'Consumo Histórico', data: chartData.topMateriales.map(m => m.consumido), backgroundColor: '#f59e0b' },
+            { label: 'Stock Actual', data: chartData.topMateriales.map(m => m.stock), backgroundColor: '#3b82f6' }
+        ]
+    }), [chartData.topMateriales]);
+
+    const barOptions = useMemo(() => ({
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: {
+            legend: { position: 'top', labels: { color: cssTextSecondary, font: { family: 'Inter' } } },
+            tooltip: {
+                backgroundColor: 'rgba(0,0,0,0.85)', padding: 12, cornerRadius: 8, titleFont: { family: 'Inter' }, bodyFont: { family: 'Inter' },
+                callbacks: { title: (context) => context?.length ? chartData.topMateriales[context[0].dataIndex]?.nombre || '' : '' }
+            }
+        },
+        scales: {
+            x: { grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false }, ticks: { color: cssTextMuted, font: { family: 'Inter' } } },
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false }, ticks: { color: cssTextMuted, font: { family: 'Inter' } } }
+        }
+    }), [cssTextSecondary, cssTextMuted, chartData.topMateriales]);
+
+    const lineBarData = useMemo(() => ({
+        labels: chartData.cotizacionesAnual.labels,
+        datasets: [
+            { type: 'line', label: 'Tendencia', data: chartData.cotizacionesAnual.data, borderColor: '#f59e0b', borderWidth: 3, fill: false, tension: 0.4, pointBackgroundColor: '#f59e0b', pointBorderColor: '#fff', pointBorderWidth: 2, pointRadius: 4, pointHoverRadius: 6 },
+            { type: 'bar', label: 'Valor Cotizado (RD$)', data: chartData.cotizacionesAnual.data, backgroundColor: 'rgba(59, 130, 246, 0.4)', borderColor: '#3b82f6', borderWidth: 1, borderRadius: 4 }
+        ]
+    }), [chartData.cotizacionesAnual]);
+
+    const lineBarOptions = useMemo(() => ({
+        responsive: true,
+        maintainAspectRatio: false,
+        interaction: { mode: 'index', intersect: false },
+        plugins: {
+            legend: { position: 'top', labels: { color: cssTextSecondary, font: { family: 'Inter', size: 12 } } },
+            tooltip: { backgroundColor: 'rgba(0,0,0,0.85)', padding: 12, cornerRadius: 8, titleFont: { family: 'Inter' }, bodyFont: { family: 'Inter' } }
+        },
+        scales: {
+            x: { grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false }, ticks: { color: cssTextMuted, font: { family: 'Inter' } } },
+            y: { beginAtZero: true, grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false }, ticks: { color: cssTextMuted, font: { family: 'Inter' }, callback: (v) => '$' + v.toLocaleString() } }
+        }
+    }), [cssTextSecondary, cssTextMuted]);
+
     if (loading) return <div className="loading-spinner" />;
 
     return (
@@ -251,29 +311,8 @@ export default function Dashboard() {
                     <div style={{ height: 300, position: 'relative' }}>
                         <Doughnut
                             key={themeTrigger}
-                            data={{
-                                labels: ['Activos', 'Retrasados', 'Pausados', 'Completados', 'Cancelados'],
-                                datasets: [{
-                                    data: chartData.proyectosStatus || [0, 0, 0, 0, 0],
-                                    backgroundColor: [
-                                        '#10b981', // green for activo
-                                        '#f97316', // orange for retrasado
-                                        '#eab308', // yellow for pausado
-                                        '#3b82f6', // blue for completado
-                                        '#ef4444'  // red for cancelado
-                                    ],
-                                    borderWidth: 0,
-                                    hoverOffset: 4
-                                }]
-                            }}
-                            options={{
-                                plugins: {
-                                    legend: { position: 'right', labels: { color: cssTextSecondary, font: { family: 'Inter' } } },
-                                    tooltip: { backgroundColor: 'rgba(0,0,0,0.85)', padding: 12, cornerRadius: 8, titleFont: { family: 'Inter' }, bodyFont: { family: 'Inter' } }
-                                },
-                                maintainAspectRatio: false,
-                                cutout: '70%'
-                            }}
+                            data={doughnutChartData}
+                            options={doughnutOptions}
                         />
                     </div>
                 </div>
@@ -292,53 +331,8 @@ export default function Dashboard() {
                     <div style={{ height: 300, position: 'relative' }}>
                         <Bar
                             key={themeTrigger}
-                            data={{
-                                labels: chartData.topMateriales.map(m => m.nombre.length > 18 ? m.nombre.substring(0, 18) + '...' : m.nombre),
-                                datasets: [
-                                    {
-                                        label: 'Consumo Histórico',
-                                        data: chartData.topMateriales.map(m => m.consumido),
-                                        backgroundColor: '#f59e0b'
-                                    },
-                                    {
-                                        label: 'Stock Actual',
-                                        data: chartData.topMateriales.map(m => m.stock),
-                                        backgroundColor: '#3b82f6'
-                                    }
-                                ]
-                            }}
-                            options={{
-                                responsive: true,
-                                maintainAspectRatio: false,
-                                plugins: {
-                                    legend: { position: 'top', labels: { color: cssTextSecondary, font: { family: 'Inter' } } },
-                                    tooltip: { 
-                                        backgroundColor: 'rgba(0,0,0,0.85)', 
-                                        padding: 12, 
-                                        cornerRadius: 8, 
-                                        titleFont: { family: 'Inter' }, 
-                                        bodyFont: { family: 'Inter' },
-                                        callbacks: {
-                                            title: (context) => {
-                                                if (!context || !context.length) return '';
-                                                const idx = context[0].dataIndex;
-                                                return chartData.topMateriales[idx]?.nombre || '';
-                                            }
-                                        }
-                                    }
-                                },
-                                scales: {
-                                    x: {
-                                        grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false },
-                                        ticks: { color: cssTextMuted, font: { family: 'Inter' } }
-                                    },
-                                    y: {
-                                        beginAtZero: true,
-                                        grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false },
-                                        ticks: { color: cssTextMuted, font: { family: 'Inter' } }
-                                    }
-                                }
-                            }}
+                            data={barChartData}
+                            options={barOptions}
                         />
                     </div>
                 </div>
@@ -359,59 +353,8 @@ export default function Dashboard() {
                     <Chart
                         key={themeTrigger}
                         type='bar'
-                        data={{
-                            labels: chartData.cotizacionesAnual.labels,
-                            datasets: [
-                                {
-                                    type: 'line',
-                                    label: 'Tendencia',
-                                    data: chartData.cotizacionesAnual.data,
-                                    borderColor: '#f59e0b',
-                                    borderWidth: 3,
-                                    fill: false,
-                                    tension: 0.4,
-                                    pointBackgroundColor: '#f59e0b',
-                                    pointBorderColor: '#fff',
-                                    pointBorderWidth: 2,
-                                    pointRadius: 4,
-                                    pointHoverRadius: 6
-                                },
-                                {
-                                    type: 'bar',
-                                    label: 'Valor Cotizado (RD$)',
-                                    data: chartData.cotizacionesAnual.data,
-                                    backgroundColor: 'rgba(59, 130, 246, 0.4)',
-                                    borderColor: '#3b82f6',
-                                    borderWidth: 1,
-                                    borderRadius: 4
-                                }
-                            ]
-                        }}
-                        options={{
-                            responsive: true,
-                            maintainAspectRatio: false,
-                            interaction: { mode: 'index', intersect: false },
-                            plugins: {
-                                legend: { position: 'top', labels: { color: cssTextSecondary, font: { family: 'Inter', size: 12 } } },
-                                tooltip: { backgroundColor: 'rgba(0,0,0,0.85)', padding: 12, cornerRadius: 8, titleFont: { family: 'Inter' }, bodyFont: { family: 'Inter' } }
-                            },
-                            scales: {
-                                x: {
-                                    grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false },
-                                    ticks: { color: cssTextMuted, font: { family: 'Inter' } }
-                                },
-                                y: {
-                                    beginAtZero: true,
-                                    grid: { color: 'rgba(255,255,255,0.06)', drawBorder: false },
-                                    ticks: {
-                                        color: cssTextMuted, font: { family: 'Inter' },
-                                        callback: function (value) {
-                                            return '$' + value.toLocaleString();
-                                        }
-                                    }
-                                }
-                            }
-                        }}
+                        data={lineBarData}
+                        options={lineBarOptions}
                     />
                 </div>
             </div>

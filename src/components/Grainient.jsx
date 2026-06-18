@@ -140,7 +140,7 @@ const Grainient = ({
       webgl: 2,
       alpha: true,
       antialias: false,
-      dpr: Math.min(window.devicePixelRatio || 1, 2)
+      dpr: 1  // background gradient — 1x is imperceptible, saves 4× on Retina
     });
 
     const gl = renderer.gl;
@@ -203,11 +203,15 @@ const Grainient = ({
     let isVisible = true;
     let isPageVisible = !document.hidden;
     const t0 = performance.now();
+    let lastRender = 0;
+    const FRAME_MS = 1000 / 24; // 24fps cap — slow gradient is indistinguishable from 60fps
 
     const loop = t => {
+      raf = requestAnimationFrame(loop);
+      if (t - lastRender < FRAME_MS) return;
+      lastRender = t;
       program.uniforms.iTime.value = (t - t0) * 0.001;
       renderer.render({ scene: mesh });
-      raf = requestAnimationFrame(loop);
     };
 
     const tryStart = () => {

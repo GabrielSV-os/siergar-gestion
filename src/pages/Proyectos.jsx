@@ -436,7 +436,7 @@ export default function Proyectos() {
                 const qty = parseInt(row.cantidad, 10);
                 const pInv = proyectoInventario.find(pi => pi.material_id === row.material_id);
                 const stock = pInv?.cantidad ?? 0;
-                const matName = materiales.find(m => m.id === row.material_id)?.nombre || '';
+                const matName = materialesMap.get(row.material_id)?.nombre || '';
                 if (qty > stock) { toast(`Stock insuficiente en almacén del proyecto para ${matName}. Disponible: ${stock}`, 'error'); return; }
             }
 
@@ -492,7 +492,7 @@ export default function Proyectos() {
                 const qty = parseInt(row.cantidad, 10);
                 const { data: invData } = await supabase.from('inventario').select('cantidad').eq('material_id', row.material_id).single();
                 const stock = invData?.cantidad ?? 0;
-                const matName = materiales.find(m => m.id === row.material_id)?.nombre || '';
+                const matName = materialesMap.get(row.material_id)?.nombre || '';
                 if (qty > stock) { toast(`Stock insuficiente para ${matName}. Disponible: ${stock}`, 'error'); return; }
             }
             for (const row of validRows) {
@@ -507,7 +507,7 @@ export default function Proyectos() {
                 }
                 await supabase.from('movimientos_inventario').insert({ material_id: row.material_id, tipo: 'salida', cantidad: qty, descripcion: `Enviado al almacén del proyecto: ${selectedProyecto.nombre}`, proyecto_id: selectedProyecto.id });
             }
-            const desc = validRows.map(r => { const m = materiales.find(m => m.id === r.material_id); return `${m?.nombre}: ${r.cantidad}`; }).join(', ');
+            const desc = validRows.map(r => `${materialesMap.get(r.material_id)?.nombre}: ${r.cantidad}`).join(', ');
             await supabase.from('proyecto_historial').insert({ proyecto_id: selectedProyecto.id, estado_anterior: selectedProyecto.estado, estado_nuevo: selectedProyecto.estado, motivo: `Material agregado al almacén: ${desc}` });
             toast(`${validRows.length} material(es) agregado(s) al almacén`);
             setAlmacenRows([{ material_id: '', cantidad: '' }]); setShowAddAlmacen(false);
@@ -581,7 +581,7 @@ export default function Proyectos() {
             for (const row of validRows) {
                 const qty = parseInt(row.cantidad, 10);
                 const pInv = proyectoInventario.find(pi => pi.material_id === row.material_id);
-                const matName = materiales.find(m => m.id === row.material_id)?.nombre || '';
+                const matName = materialesMap.get(row.material_id)?.nombre || '';
                 if (qty > (pInv?.cantidad ?? 0)) { toast(`Solo hay ${pInv?.cantidad ?? 0} de ${matName} en el almacén`, 'error'); return; }
             }
             for (const row of validRows) {
@@ -593,7 +593,7 @@ export default function Proyectos() {
                 await supabase.from('proyecto_devolucion').insert({ proyecto_id: selectedProyecto.id, material_id: row.material_id, cantidad: qty, observaciones: row.observaciones || '' });
                 await supabase.from('movimientos_inventario').insert({ material_id: row.material_id, tipo: 'entrada', cantidad: qty, descripcion: `Devolución desde proyecto: ${selectedProyecto.nombre}`, proyecto_id: selectedProyecto.id });
             }
-            const desc = validRows.map(r => { const m = materiales.find(m => m.id === r.material_id); return `${m?.nombre}: ${r.cantidad}`; }).join(', ');
+            const desc = validRows.map(r => `${materialesMap.get(r.material_id)?.nombre}: ${r.cantidad}`).join(', ');
             await supabase.from('proyecto_historial').insert({ proyecto_id: selectedProyecto.id, estado_anterior: selectedProyecto.estado, estado_nuevo: selectedProyecto.estado, motivo: `Devolución de materiales: ${desc}` });
             toast('Materiales devueltos al inventario');
             setDevolucionRows([{ material_id: '', cantidad: '', observaciones: '' }]); setShowDevolucion(false);
@@ -649,7 +649,7 @@ export default function Proyectos() {
                 const totalAsignado = asignaciones.filter(a => a.material_id === row.material_id).reduce((s, a) => s + a.cantidad, 0);
                 const totalConsumido = consumosPrevios.filter(c => c.material_id === row.material_id).reduce((s, c) => s + c.cantidad, 0);
                 const disponible = totalAsignado - totalConsumido;
-                const matName = materiales.find(m => m.id === row.material_id)?.nombre || '';
+                const matName = materialesMap.get(row.material_id)?.nombre || '';
                 if (qty > disponible) {
                     toast(`Inventario insuficiente para ${matName}. Disponible: ${disponible}`, 'error');
                     return;
@@ -1303,6 +1303,15 @@ export default function Proyectos() {
             setSelectedProyecto({ ...proyecto, estado: newEstado });
         }
     }
+
+    // O(1) material lookup — replaces repeated .find() in handlers
+    const materialesMap = useMemo(() => new Map(materiales.map(m => [m.id, m])), [materiales]);
+    // Available brigadas for assignment modal (O(n) instead of O(n²))
+    const assignedBrigadaIds = useMemo(() => new Set(proyectoBrigadas.map(pb => pb.brigada_id)), [proyectoBrigadas]);
+    const availableBrigadasOptions = useMemo(
+        () => brigadas.filter(b => !assignedBrigadaIds.has(b.id)).map(b => ({ value: b.id, label: b.nombre })),
+        [brigadas, assignedBrigadaIds]
+    );
 
     if (loading) return <div className="loading-spinner" />;
 
@@ -3020,7 +3029,7 @@ export default function Proyectos() {
                                             placeholder="Seleccionar brigada..."
                                             searchPlaceholder="Buscar brigada..."
                                             required
-                                            options={brigadas.filter(b => !proyectoBrigadas.find(pb => pb.brigada_id === b.id)).map(b => ({ value: b.id, label: b.nombre }))}
+                                            options={availableBrigadasOptions}
                                         />
                                     </div>
                                     <div className="form-actions">

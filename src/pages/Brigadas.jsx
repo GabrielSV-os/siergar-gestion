@@ -864,20 +864,20 @@ export default function Brigadas() {
 
     // DETAIL VIEW
     if (selectedBrigada) {
-        // Excluir personal ya en esta brigada y ya activo en otra brigada
+        // Excluir personal ya en esta brigada y ya activo en otra brigada (O(n) with Map/Set)
+        const personalByName = new Map(personal.map(p => [p.nombre, p.id]));
+        const brigadaPersonalIds = new Set(brigadaPersonal.map(bp => bp.personal_id));
         const allAssignedIds = new Set();
         Object.entries(brigadaMembers).forEach(([brigId, members]) => {
             if (brigId !== selectedBrigada.id) {
                 members.forEach(m => {
-                    // Find the personal id from name match
-                    const p = personal.find(pp => pp.nombre === m.nombre);
-                    if (p) allAssignedIds.add(p.id);
+                    const pid = personalByName.get(m.nombre);
+                    if (pid) allAssignedIds.add(pid);
                 });
             }
         });
         const availablePersonal = personal.filter(p =>
-            !brigadaPersonal.find(bp => bp.personal_id === p.id) &&
-            !allAssignedIds.has(p.id)
+            !brigadaPersonalIds.has(p.id) && !allAssignedIds.has(p.id)
         );
 
         return (
