@@ -141,11 +141,117 @@ body.page-notas {
   overflow-y: auto;
   position: relative;
   z-index: 2;
+  transition: width 0.22s ease, min-width 0.22s ease;
+}
+
+/* ====== COLLAPSED SIDEBAR ====== */
+.sidebar.sidebar-collapsed {
+  width: 72px;
+  min-width: 72px;
+  overflow: visible;
+}
+
+.sidebar.sidebar-collapsed .sidebar-logo-text,
+.sidebar.sidebar-collapsed .sidebar-section-title,
+.sidebar.sidebar-collapsed .nav-item > span,
+.sidebar.sidebar-collapsed .storage-progress-bg,
+.sidebar.sidebar-collapsed .storage-text {
+  display: none;
+}
+
+.sidebar.sidebar-collapsed .sidebar-header {
+  padding: 16px 8px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+}
+
+.sidebar.sidebar-collapsed .sidebar-logo {
+  justify-content: center;
+}
+
+.sidebar.sidebar-collapsed .sidebar-nav {
+  padding: 8px 6px;
+  overflow: visible;
+}
+
+.sidebar.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 10px;
+  position: relative;
+}
+
+.sidebar.sidebar-collapsed .storage-indicator {
+  padding: 8px 0;
+  display: flex;
+  justify-content: center;
+}
+
+.sidebar.sidebar-collapsed .storage-header {
+  justify-content: center;
+}
+
+.sidebar.sidebar-collapsed .storage-header > span {
+  display: none;
+}
+
+/* Tooltip on collapsed nav items */
+.sidebar.sidebar-collapsed .nav-item::after {
+  content: attr(data-label);
+  position: absolute;
+  left: calc(100% + 10px);
+  top: 50%;
+  transform: translateY(-50%);
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+  padding: 5px 10px;
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  box-shadow: 0 4px 16px rgba(0,0,0,0.25);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.15s;
+  z-index: 200;
+}
+
+.sidebar.sidebar-collapsed .nav-item:hover::after {
+  opacity: 1;
+}
+
+/* Toggle button */
+.sidebar-toggle-btn {
+  background: none;
+  border: 1px solid var(--border-color);
+  border-radius: 50%;
+  width: 26px;
+  height: 26px;
+  min-width: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  flex-shrink: 0;
+}
+
+.sidebar-toggle-btn:hover {
+  background: var(--bg-card);
+  color: var(--text-primary);
+  border-color: var(--accent-primary);
 }
 
 .sidebar-header {
   padding: 24px 20px 20px;
   border-bottom: 1px solid var(--border-light);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
 }
 
 .sidebar-logo {
