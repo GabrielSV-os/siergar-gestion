@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { NavLink, Outlet, useLocation } from 'react-router-dom';
-import { Package, FolderKanban, Users, LayoutDashboard, BookOpen, StickyNote, Hammer, Database, Menu, X } from 'lucide-react';
+import { Package, FolderKanban, Users, LayoutDashboard, BookOpen, StickyNote, Hammer, Database, Menu, X, ChevronLeft, ChevronRight } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import Grainient from './Grainient';
 import Aurora from './Aurora';
@@ -10,7 +10,16 @@ export default function Layout() {
     const isNotas = location.pathname === '/notas';
     const [dbSize, setDbSize] = useState(0);
     const [sidebarOpen, setSidebarOpen] = useState(false);
+    const [sidebarCollapsed, setSidebarCollapsed] = useState(
+        () => localStorage.getItem('siergar-sidebar') === 'collapsed'
+    );
     const [isLight, setIsLight] = useState(() => (localStorage.getItem('siergar-theme') || 'dark') === 'light');
+
+    const toggleSidebar = () => setSidebarCollapsed(prev => {
+        const next = !prev;
+        localStorage.setItem('siergar-sidebar', next ? 'collapsed' : 'expanded');
+        return next;
+    });
 
     useEffect(() => {
         const observer = new MutationObserver(() => {
@@ -70,45 +79,48 @@ export default function Layout() {
             </button>
             {/* Mobile backdrop */}
             {sidebarOpen && <div className="sidebar-backdrop" onClick={() => setSidebarOpen(false)} />}
-            <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''}`}>
+            <aside className={`sidebar ${sidebarOpen ? 'sidebar-open' : ''} ${sidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
                 <div className="sidebar-header">
                     <div className="sidebar-logo">
                         <div className="sidebar-logo-icon">SG</div>
-                        <div>
+                        <div className="sidebar-logo-text">
                             <h1>Siergar</h1>
                             <span>Gestión de Materiales</span>
                         </div>
                     </div>
+                    <button className="sidebar-toggle-btn" onClick={toggleSidebar} title={sidebarCollapsed ? 'Expandir menú' : 'Contraer menú'}>
+                        {sidebarCollapsed ? <ChevronRight size={15} /> : <ChevronLeft size={15} />}
+                    </button>
                 </div>
                 <nav className="sidebar-nav">
                     <div className="sidebar-section-title">Módulos</div>
-                    <NavLink to="/" end className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
+                    <NavLink to="/" end data-label="Dashboard" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <LayoutDashboard />
                         <span>Dashboard</span>
                     </NavLink>
-                    <NavLink to="/inventario" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
+                    <NavLink to="/inventario" data-label="Inventario" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <Package />
                         <span>Inventario</span>
                     </NavLink>
-                    <NavLink to="/proyectos" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
+                    <NavLink to="/proyectos" data-label="Proyectos" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <FolderKanban />
                         <span>Proyectos</span>
                     </NavLink>
-                    <NavLink to="/personal" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
+                    <NavLink to="/personal" data-label="Personal" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <Users />
                         <span>Personal</span>
                     </NavLink>
-                    <NavLink to="/fabricacion" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
+                    <NavLink to="/fabricacion" data-label="Fabricación" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <Hammer />
                         <span>Fabricación</span>
                     </NavLink>
-                    <NavLink to="/notas" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
+                    <NavLink to="/notas" data-label="Notas" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <StickyNote />
                         <span>Notas</span>
                     </NavLink>
                     <div style={{ flex: 1 }} />
                     <div className="sidebar-section-title" style={{ marginTop: 8 }}>Ayuda</div>
-                    <NavLink to="/manual" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
+                    <NavLink to="/manual" data-label="Manual de Uso" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} onClick={() => setSidebarOpen(false)}>
                         <BookOpen />
                         <span>Manual de Uso</span>
                     </NavLink>

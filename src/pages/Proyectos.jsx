@@ -1724,12 +1724,17 @@ export default function Proyectos() {
                                         const chartColors = [
                                             '#3b82f6', '#f59e0b', '#ef4444', '#10b981', '#a855f7',
                                             '#06b6d4', '#f97316', '#ec4899', '#84cc16', '#6366f1',
-                                            '#14b8a6', '#e11d48', '#8b5cf6', '#22d3ee', '#facc15'
                                         ];
 
                                         const truncate = (str, n = 22) => str.length > n ? str.slice(0, n) + '…' : str;
 
-                                        const datasets = Object.keys(materialMap).map((materialName, idx) => {
+                                        const top10Materials = Object.keys(materialMap)
+                                            .map(name => ({ name, total: Object.values(materialMap[name]).reduce((a, b) => a + b, 0) }))
+                                            .sort((a, b) => b.total - a.total)
+                                            .slice(0, 10)
+                                            .map(m => m.name);
+
+                                        const datasets = top10Materials.map((materialName, idx) => {
                                             const color = chartColors[idx % chartColors.length];
                                             return {
                                                 label: materialName,          // full name — used in tooltips
